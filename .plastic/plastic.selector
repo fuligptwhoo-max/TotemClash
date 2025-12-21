@@ -1,0 +1,4 @@
+repository "Totem Clash/Totem Clash 2025-12-21_11-12-27@10171537608498@cloud"
+  path "/"
+    br "/main"
+    co "/main"
