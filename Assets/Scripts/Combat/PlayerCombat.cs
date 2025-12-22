@@ -1,19 +1,22 @@
 using UnityEngine;
+using Mirror;
 
-public class PlayerCombat : MonoBehaviour
+public class PlayerCombat : NetworkBehaviour
 {
     [Header("Combat References")]
-    public PlayerClass currentClass;
     public Animator animator;
-    public PlayerController playerController;
+    public NetworkPlayerController playerController;
+    
+    [Header("Class")]
+    public MagicianClass magicianClass;
     
     private void Awake()
     {
         if (playerController == null)
-            playerController = GetComponent<PlayerController>();
+            playerController = GetComponent<NetworkPlayerController>();
             
-        if (currentClass == null)
-            currentClass = GetComponent<PlayerClass>();
+        if (magicianClass == null)
+            magicianClass = GetComponent<MagicianClass>();
             
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
@@ -21,59 +24,45 @@ public class PlayerCombat : MonoBehaviour
     
     private void Start()
     {
-        if (currentClass != null && playerController != null && animator != null)
+        if (magicianClass != null && playerController != null && animator != null)
         {
-            currentClass.Initialize(playerController, this, animator);
+            magicianClass.Initialize(playerController, this, animator);
         }
     }
     
     public bool PrimaryAttack(Vector3 targetPosition)
     {
-        if (currentClass == null)
-        {
-            Debug.LogWarning("PlayerCombat: currentClass is null!");
-            return false;
-        }
+        if (!isLocalPlayer || magicianClass == null) return false;
         
-        return currentClass.PrimaryAttack(targetPosition);
+        return magicianClass.PrimaryAttack(targetPosition);
     }
     
     public bool UseAbility(int abilityIndex, Vector3 targetPosition)
     {
-        if (currentClass == null) return false;
+        if (!isLocalPlayer || magicianClass == null) return false;
         
         switch (abilityIndex)
         {
-            case 0:
-                return currentClass.Ability1(targetPosition);
-            case 1:
-                return currentClass.Ability2(targetPosition);
-            default:
-                return false;
+            case 0: return magicianClass.Ability1(targetPosition);
+            case 1: return magicianClass.Ability2(targetPosition);
+            default: return false;
         }
     }
     
     public bool UseUltimate(Vector3 targetPosition)
     {
-        if (currentClass != null)
-        {
-            return currentClass.UltimateAbility(targetPosition);
-        }
-        return false;
-    }
-    
-    private void Update()
-    {
-        // Логика обновления не требуется
+        if (!isLocalPlayer || magicianClass == null) return false;
+        
+        return magicianClass.UltimateAbility(targetPosition);
     }
     
     public float GetCooldownProgress(int abilityIndex)
     {
-        return currentClass != null ? currentClass.GetCooldownProgress(abilityIndex) : 0f;
+        return magicianClass != null ? magicianClass.GetCooldownProgress(abilityIndex) : 0f;
     }
     
     public bool IsAbilityReady(int abilityIndex)
     {
-        return currentClass != null ? currentClass.IsAbilityReady(abilityIndex) : false;
+        return magicianClass != null ? magicianClass.IsAbilityReady(abilityIndex) : false;
     }
 }

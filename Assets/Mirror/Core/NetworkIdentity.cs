@@ -1349,6 +1349,8 @@ namespace Mirror
         }
 
         bool hadAuthority;
+        public bool localPlayerAuthority;
+
         internal void NotifyAuthority()
         {
             if (!hadAuthority && isOwned)

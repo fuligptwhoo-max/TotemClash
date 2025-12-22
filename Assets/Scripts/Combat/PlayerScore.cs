@@ -1,37 +1,47 @@
 using UnityEngine;
+using Mirror;
 
-public class PlayerScore : MonoBehaviour
+public class PlayerScore : NetworkBehaviour
 {
     [Header("Player Info")]
+    [SyncVar]
     public int playerId = 0; // 0 для первого игрока, 1 для второго и т.д.
     
     [Header("Score")]
+    [SyncVar]
     public int score = 0;
     
     private GameManager gameManager;
     
     private void Start()
     {
-        gameManager = FindAnyObjectByType<GameManager>();
+        gameManager = FindFirstObjectByType<GameManager>();
     }
     
-    public void AddScore(int points)
+    [Command]
+    public void CmdAddScore(int points)
     {
         score += points;
+        RpcUpdateScore(score);
         
-        if (gameManager != null)
+        if (gameManager != null && isServer)
         {
-            // Если GameManager поддерживает ID игрока
-            if (gameManager.GetType().GetMethod("AddScore", new System.Type[] { typeof(int), typeof(int) }) != null)
-            {
-                // Через рефлексию вызываем метод с двумя параметрами
-                gameManager.GetType().GetMethod("AddScore").Invoke(gameManager, new object[] { playerId, points });
-            }
-            else
-            {
-                // Иначе используем метод с одним параметром
-                gameManager.GetType().GetMethod("AddScore", new System.Type[] { typeof(int) }).Invoke(gameManager, new object[] { points });
-            }
+            gameManager.AddScore(points);
+        }
+    }
+    
+    [ClientRpc]
+    void RpcUpdateScore(int newScore)
+    {
+        score = newScore;
+    }
+    
+    // Вызывается на клиенте для добавления очков
+    public void AddScore(int points)
+    {
+        if (isLocalPlayer)
+        {
+            CmdAddScore(points);
         }
     }
 }

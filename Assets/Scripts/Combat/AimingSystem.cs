@@ -1,55 +1,179 @@
 using UnityEngine;
 using UnityEngine.UI;
+using Mirror;
 
-public class AimingSystem : MonoBehaviour
+public class AimingSystem : NetworkBehaviour
 {
     [Header("References")]
     public Camera playerCamera;
-    public Image crosshairUI;
+    public GameObject crosshairPrefab;
     
     [Header("Settings")]
-    public LayerMask aimLayerMask = ~0;
+    public LayerMask playerLayerMask;
+    public LayerMask groundLayerMask;
     public float maxAimDistance = 50f;
+    public float aimHeightOffset = 1f;
+    
+    [Header("Crosshair Colors")]
     public Color normalColor = Color.white;
     public Color enemyColor = Color.red;
     
     private Vector3 currentAimPosition;
+    private GameObject aimedPlayer = null;
+    private GameObject crosshairObject;
+    private Image crosshairImage;
+    private RectTransform crosshairRect;
+    private bool crosshairInitialized = false;
     
-    private void Start()
+    // Оптимизация: кэш для Raycast
+    private RaycastHit[] raycastHits = new RaycastHit[10];
+    
+    void Start()
     {
-        if (crosshairUI == null)
+        if (playerCamera == null)
+            playerCamera = Camera.main;
+            
+        InitializeCrosshair();
+    }
+    
+    void InitializeCrosshair()
+    {
+        if (crosshairInitialized || !isLocalPlayer) return;
+        
+        if (crosshairObject == null)
         {
-            Debug.LogWarning("Crosshair UI не назначен в AimingSystem!");
+            crosshairObject = GameObject.Find("Crosshair");
+            if (crosshairObject == null)
+            {
+                CreateCrosshair();
+            }
         }
         
-        if (playerCamera == null)
+        if (crosshairObject != null)
         {
-            playerCamera = Camera.main;
+            crosshairRect = crosshairObject.GetComponent<RectTransform>();
+            crosshairImage = crosshairObject.GetComponent<Image>();
+            
+            if (crosshairImage == null)
+            {
+                crosshairImage = crosshairObject.AddComponent<Image>();
+            }
+            
+            crosshairImage.color = normalColor;
+            crosshairObject.SetActive(true);
+            crosshairInitialized = true;
+            
+            Debug.Log("Прицел инициализирован");
         }
     }
     
-    private void Update()
+    void CreateCrosshair()
     {
-        UpdateAim();
+        Canvas canvas = FindFirstObjectByType<Canvas>();
+        if (canvas == null)
+        {
+            GameObject canvasObj = new GameObject("CrosshairCanvas");
+            canvas = canvasObj.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 1000;
+            
+            CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            
+            canvasObj.AddComponent<GraphicRaycaster>();
+        }
+        
+        crosshairObject = new GameObject("Crosshair");
+        crosshairObject.transform.SetParent(canvas.transform, false);
+        
+        crosshairRect = crosshairObject.AddComponent<RectTransform>();
+        crosshairRect.sizeDelta = new Vector2(32, 32);
+        
+        crosshairImage = crosshairObject.AddComponent<Image>();
+        crosshairImage.color = normalColor;
+        
+        CreateSimpleCrosshairSprite();
+    }
+    
+    void CreateSimpleCrosshairSprite()
+    {
+        Texture2D texture = new Texture2D(64, 64);
+        Color[] colors = new Color[64 * 64];
+        
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++)
+            {
+                bool isCross = (x >= 30 && x <= 34) || (y >= 30 && y <= 34);
+                colors[y * 64 + x] = isCross ? Color.white : Color.clear;
+            }
+        }
+        
+        texture.SetPixels(colors);
+        texture.Apply();
+        
+        Sprite sprite = Sprite.Create(texture, new Rect(0, 0, 64, 64), new Vector2(0.5f, 0.5f));
+        crosshairImage.sprite = sprite;
+    }
+    
+    void Update()
+    {
+        if (!isLocalPlayer) return;
+        
+        if (!crosshairInitialized)
+            InitializeCrosshair();
+            
+        // ОПТИМИЗАЦИЯ: Обновляем прицел не каждый кадр
+        if (Time.frameCount % 2 == 0) // Каждый второй кадр
+        {
+            UpdateAim();
+        }
+        
         UpdateCrosshair();
     }
     
-    private void UpdateAim()
+    void UpdateAim()
     {
-        if (playerCamera == null) 
-        {
-            playerCamera = Camera.main;
-            if (playerCamera == null) return;
-        }
+        if (playerCamera == null) return;
         
+        aimedPlayer = null;
+        
+        // Луч от камеры через курсор
         Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
         
-        Plane groundPlane = new Plane(Vector3.up, Vector3.zero);
-        float rayDistance;
+        // ОПТИМИЗАЦИЯ: Используем NonAlloc версию Raycast
+        int hitCount = Physics.RaycastNonAlloc(ray, raycastHits, maxAimDistance, playerLayerMask);
         
-        if (groundPlane.Raycast(ray, out rayDistance))
+        for (int i = 0; i < hitCount; i++)
         {
-            currentAimPosition = ray.GetPoint(rayDistance);
+            GameObject hitObject = raycastHits[i].collider.gameObject;
+            
+            // Проверяем что это игрок и не мы сами
+            if (hitObject.CompareTag("Player") && hitObject != gameObject)
+            {
+                aimedPlayer = hitObject;
+                // ИСПРАВЛЕНИЕ: Целимся в центр игрока (Character Controller высота)
+                CharacterController controller = aimedPlayer.GetComponent<CharacterController>();
+                if (controller != null)
+                {
+                    currentAimPosition = aimedPlayer.transform.position + Vector3.up * (controller.height * 0.7f);
+                }
+                else
+                {
+                    currentAimPosition = aimedPlayer.transform.position + Vector3.up * 1.5f;
+                }
+                return;
+            }
+        }
+        
+        // Если не попали в игрока - точка на земле
+        Plane groundPlane = new Plane(Vector3.up, Vector3.zero);
+        float distance;
+        
+        if (groundPlane.Raycast(ray, out distance))
+        {
+            currentAimPosition = ray.GetPoint(distance);
             currentAimPosition.y = 0.1f;
         }
         else
@@ -59,29 +183,17 @@ public class AimingSystem : MonoBehaviour
         }
     }
     
-    private void UpdateCrosshair()
+    void UpdateCrosshair()
     {
-        if (crosshairUI == null || playerCamera == null) return;
+        if (crosshairImage == null) return;
         
-        crosshairUI.rectTransform.position = Input.mousePosition;
+        // Меняем цвет прицела
+        crosshairImage.color = aimedPlayer != null ? enemyColor : normalColor;
         
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-        
-        if (Physics.Raycast(ray, out hit, maxAimDistance, aimLayerMask))
+        // Обновляем позицию прицела
+        if (crosshairRect != null && playerCamera != null)
         {
-            if (hit.collider.CompareTag("Player") && hit.collider.gameObject != gameObject)
-            {
-                crosshairUI.color = enemyColor;
-            }
-            else
-            {
-                crosshairUI.color = normalColor;
-            }
-        }
-        else
-        {
-            crosshairUI.color = normalColor;
+            crosshairRect.position = Input.mousePosition;
         }
     }
     
@@ -90,18 +202,21 @@ public class AimingSystem : MonoBehaviour
         return currentAimPosition;
     }
     
-    public GameObject GetTargetAtAim()
+    public GameObject GetAimedPlayer()
     {
-        if (playerCamera == null) return null;
-        
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-        
-        if (Physics.Raycast(ray, out hit, maxAimDistance, aimLayerMask))
+        return aimedPlayer;
+    }
+    
+    public bool IsAimingAtPlayer()
+    {
+        return aimedPlayer != null;
+    }
+    
+    public override void OnStopLocalPlayer()
+    {
+        if (crosshairObject != null)
         {
-            return hit.collider.gameObject;
+            Destroy(crosshairObject);
         }
-        
-        return null;
     }
 }

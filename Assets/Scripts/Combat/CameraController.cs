@@ -4,103 +4,46 @@ using Mirror;
 public class CameraController : MonoBehaviour
 {
     [Header("Camera Settings")]
-    public Transform target;
-    public Vector3 offset = new Vector3(0f, 55f, -25f);
-    public float smoothSpeed = 10f;
-    
-    [Header("View Settings")]
+    public Vector3 offset = new Vector3(0f, 25f, -10f);
+    public float smoothSpeed = 1000f;
     public float pitchAngle = 53f;
-    
-    private Vector3 velocity = Vector3.zero;
+
+    private Transform target;
     private Camera cam;
     private Quaternion fixedRotation;
-    private NetworkPlayerController networkPlayer;
-    private bool isInitialized = false;
-    
+    private Vector3 velocity = Vector3.zero;
+
     private void Start()
     {
         cam = GetComponent<Camera>();
-        fixedRotation = Quaternion.Euler(pitchAngle, 0f, 0f);
-        transform.rotation = fixedRotation;
-        
         if (cam != null)
         {
             cam.fieldOfView = 90f;
         }
-        
-        Debug.Log("CameraController инициализирован");
-    }
-    
-    private void Update()
-    {
-        // Если цель не установлена, пытаемся найти локального игрока
-        if (target == null && !isInitialized)
-        {
-            FindLocalPlayer();
-        }
-        
-        // Если нашли игрока, настраиваем камеру
-        if (target != null && !isInitialized)
-        {
-            transform.position = target.position + offset;
-            isInitialized = true;
-            Debug.Log($"Камера привязана к: {target.name}");
-        }
-    }
-    
-    private void LateUpdate()
-    {
-        if (target == null) 
-        {
-            if (!FindLocalPlayer())
-                return;
-        }
-        
-        UpdateCameraPosition();
-    }
-    
-    private bool FindLocalPlayer()
-    {
-        // Ищем всех сетевых игроков на сцене
-        var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
-        
-        foreach (var player in players)
-        {
-            // Проверяем, является ли игрок локальным (свойство isLocalPlayer из NetworkBehaviour)
-            if (player.isLocalPlayer)
-            {
-                target = player.transform;
-                networkPlayer = player;
-                
-                Debug.Log($"Найден локальный игрок для камеры: {target.name}");
-                return true;
-            }
-        }
-        
-        Debug.LogWarning("Локальный игрок не найден для камеры!");
-        return false;
-    }
-    
-    private void UpdateCameraPosition()
-    {
-        if (target == null) return;
-        
-        Vector3 desiredPosition = target.position + offset;
-        
-        // Плавное перемещение камеры
-        transform.position = Vector3.Lerp(transform.position, desiredPosition, smoothSpeed * Time.deltaTime);
-        
-        // Фиксированный угол обзора
+        fixedRotation = Quaternion.Euler(pitchAngle, 0f, 0f);
         transform.rotation = fixedRotation;
     }
-    
-    public void SetTarget(Transform newTarget)
+
+    private void Update()
     {
-        target = newTarget;
-        if (target != null)
+        // Если target не установлен, пытаемся найти локального игрока
+        if (target == null && NetworkClient.localPlayer != null)
         {
-            transform.position = target.position + offset;
-            isInitialized = true;
+            target = NetworkClient.localPlayer.transform;
+            if (target != null)
+            {
+                transform.position = target.position + offset;
+                Debug.Log("Camera attached to local player: " + target.name);
+            }
         }
+    }
+
+    private void LateUpdate()
+    {
+        if (target == null) return;
+
+        Vector3 desiredPosition = target.position + offset;
+        transform.position = Vector3.SmoothDamp(transform.position, desiredPosition, ref velocity, 1f / smoothSpeed);
+        transform.rotation = fixedRotation;
     }
 }

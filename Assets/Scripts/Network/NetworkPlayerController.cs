@@ -1,16 +1,16 @@
 using UnityEngine;
-using UnityEngine.UI;
 using Mirror;
+using UnityEngine.UI;
 using System.Collections;
 
-[RequireComponent(typeof(NetworkIdentity))]
-[RequireComponent(typeof(NetworkTransformHybrid))]
+[RequireComponent(typeof(NetworkAnimator))]
+[RequireComponent(typeof(PlayerCombat))]
+[RequireComponent(typeof(PlayerTotemInteraction))]
 public class NetworkPlayerController : NetworkBehaviour
 {
     [Header("Movement Settings")]
     public float moveSpeed = 8f;
     public float rotationSpeed = 10f;
-    public float gravity = -9.81f;
     
     [Header("Combat Settings")]
     public float attackCooldown = 0.5f;
@@ -18,55 +18,45 @@ public class NetworkPlayerController : NetworkBehaviour
     [Header("Totem Pickup Settings")]
     public float totemPickupTime = 1.5f;
     
+    [Header("Totem Pickup UI")]
+    public GameObject totemPickupUIPrefab;
+    
     [Header("References")]
     public Animator animator;
     public CharacterController characterController;
-    public Slider totemPickupSlider;
     public AimingSystem aimingSystem;
     public PlayerCombat playerCombat;
+    public HealthSystem healthSystem;
     public Camera playerCamera;
-    public AudioListener audioListener;
     
     [Header("Input Settings")]
     public KeyCode attackKey = KeyCode.Mouse0;
-    public KeyCode ability1Key = KeyCode.Alpha1;
-    public KeyCode ability2Key = KeyCode.Alpha2;
-    public KeyCode ultimateKey = KeyCode.R;
+    public KeyCode ability1Key = KeyCode.Q;
+    public KeyCode ability2Key = KeyCode.R;
+    public KeyCode ultimateKey = KeyCode.F;
     public KeyCode pickupKey = KeyCode.E;
-    public KeyCode dropKey = KeyCode.Q;
-    public KeyCode pauseKey = KeyCode.Escape;
-    
-    [SyncVar(hook = nameof(OnPlayerNameChanged))]
-    public string playerName = "Player";
-    
-    [SyncVar(hook = nameof(OnIsCarryingChanged))]
-    private bool syncIsCarrying = false;
+    public KeyCode dropKey = KeyCode.G;
     
     private PlayerTotemInteraction totemInteraction;
+    private NetworkAnimator networkAnimator;
+    
     private Vector2 inputVector = Vector2.zero;
     private Vector3 moveDirection = Vector3.zero;
-    private Vector3 velocity = Vector3.zero;
-    private bool isGrounded = true;
-    
-    private bool isPickingUpTotem = false;
-    private float totemPickupTimer = 0f;
-    private NetworkTotemController totemToPickup = null;
     
     private bool isMovementEnabled = true;
     private bool isAttackEnabled = true;
-    private bool isPaused = false;
-    private GameManager gameManager;
+    private bool controlsEnabled = true;
     
     private float lastAttackTime = 0f;
-    private NetworkAnimator networkAnimator;
     
-    private NetworkTotemController currentTotem = null;
-    private bool isCarryingTotem = false;
+    private TotemPickupUI totemPickupUI;
+    private GameObject totemPickupUIInstance;
     
-    public bool IsCarrying
-    {
-        get { return isCarryingTotem; }
-    }
+    private bool isBeingDestroyed = false;
+    private bool isApplicationQuitting = false;
+    
+    private float originalMoveSpeed;
+    private float originalRotationSpeed;
     
     private void Awake()
     {
@@ -79,93 +69,101 @@ public class NetworkPlayerController : NetworkBehaviour
         if (playerCombat == null)
             playerCombat = GetComponent<PlayerCombat>();
         
+        if (animator == null)
+            animator = GetComponentInChildren<Animator>();
+        
+        if (healthSystem == null)
+            healthSystem = GetComponent<HealthSystem>();
+        
         if (aimingSystem == null)
             aimingSystem = GetComponent<AimingSystem>();
         
-        if (playerCamera == null)
-            playerCamera = GetComponentInChildren<Camera>();
+        originalMoveSpeed = moveSpeed;
+        originalRotationSpeed = rotationSpeed;
         
-        if (audioListener == null)
-            audioListener = GetComponentInChildren<AudioListener>();
+        Application.quitting += () => isApplicationQuitting = true;
     }
     
     public override void OnStartLocalPlayer()
     {
-        base.OnStartLocalPlayer();
+        if (aimingSystem != null)
+            aimingSystem.enabled = true;
+            
+        SetupCamera();
         
-        Debug.Log($"Локальный игрок запущен: {playerName}");
+        Cursor.visible = false;
+        Cursor.lockState = CursorLockMode.Confined;
         
-        if (playerCamera != null)
-            playerCamera.enabled = true;
+        InitializeTotemPickupUI();
         
-        if (audioListener != null)
-            audioListener.enabled = true;
-        
-        SetupCursor();
-        
-        if (totemPickupSlider != null)
-        {
-            totemPickupSlider.gameObject.SetActive(false);
-        }
-        
-        gameManager = FindAnyObjectByType<GameManager>();
-        
+        Debug.Log($"Локальный игрок инициализирован: {gameObject.name}");
+    }
+    
+    private void Start()
+    {
         EnableControls(true);
         
-        CmdSetPlayerName($"Player_{netId}");
-        
-        CameraController cameraController = FindAnyObjectByType<CameraController>();
+        if (playerCamera == null)
+        {
+            playerCamera = Camera.main;
+        }
+    }
+    
+    private void SetupCamera()
+    {
+        CameraController cameraController = FindFirstObjectByType<CameraController>();
         if (cameraController != null)
         {
-            cameraController.SetTarget(transform);
+            cameraController.enabled = true;
         }
     }
     
-    public override void OnStartClient()
+    private void InitializeTotemPickupUI()
     {
-        base.OnStartClient();
-        
-        if (!isLocalPlayer)
+        if (totemPickupUIPrefab == null)
         {
-            if (playerCamera != null)
-                playerCamera.enabled = false;
-            
-            if (audioListener != null)
-                audioListener.enabled = false;
-            
-            if (aimingSystem != null && aimingSystem.crosshairUI != null)
-            {
-                aimingSystem.crosshairUI.gameObject.SetActive(false);
-            }
+            Debug.LogWarning("Префаб TotemPickupUI не назначен!");
+            return;
         }
-    }
-    
-    private void SetupCursor()
-    {
-        Cursor.visible = false;
-        Cursor.lockState = CursorLockMode.Locked;
         
-        if (aimingSystem != null && aimingSystem.crosshairUI != null)
+        Canvas canvas = FindFirstObjectByType<Canvas>();
+        if (canvas == null)
         {
-            aimingSystem.crosshairUI.gameObject.SetActive(true);
+            GameObject canvasObj = new GameObject("PlayerCanvas");
+            canvas = canvasObj.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 100;
+            
+            CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            
+            canvasObj.AddComponent<GraphicRaycaster>();
         }
+        
+        totemPickupUIInstance = Instantiate(totemPickupUIPrefab, canvas.transform);
+        totemPickupUI = totemPickupUIInstance.GetComponent<TotemPickupUI>();
+        
+        if (totemPickupUI != null)
+        {
+            totemPickupUI.Hide();
+            totemPickupUI.ResetProgress();
+        }
+        
+        Debug.Log("UI для подбора тотема инициализировано");
     }
     
     private void Update()
     {
-        if (!isLocalPlayer) return;
-        if (isPaused) return;
+        if (!isLocalPlayer || !controlsEnabled) return;
         
         GetInput();
-        CheckGround();
-        ApplyGravity();
         
         if (isMovementEnabled)
         {
             MovePlayer();
         }
         
-        UpdateTotemPickup();
         UpdateAnimations();
         HandleInput();
     }
@@ -181,174 +179,76 @@ public class NetworkPlayerController : NetworkBehaviour
     
     private void HandleInput()
     {
-        if (Input.GetKeyDown(attackKey) && isAttackEnabled && aimingSystem != null)
+        if (Input.GetKeyDown(attackKey) && isAttackEnabled)
         {
             if (Time.time - lastAttackTime >= attackCooldown)
             {
-                if (playerCombat != null)
-                {
-                    Vector3 aimPosition = aimingSystem.GetAimPosition();
-                    CmdPrimaryAttack(aimPosition);
-                    lastAttackTime = Time.time;
-                }
+                PerformAttack();
             }
         }
         
-        if (Input.GetKeyDown(ability1Key) && isAttackEnabled && aimingSystem != null)
+        if (Input.GetKeyDown(ability1Key) && isAttackEnabled)
         {
-            if (playerCombat != null)
+            UseAbility(0);
+        }
+        
+        if (Input.GetKeyDown(ability2Key) && isAttackEnabled)
+        {
+            UseAbility(1);
+        }
+        
+        if (Input.GetKeyDown(ultimateKey) && isAttackEnabled)
+        {
+            UseUltimate();
+        }
+        
+        if (Input.GetKeyDown(pickupKey))
+        {
+            if (IsCarryingTotem())
             {
-                Vector3 aimPosition = aimingSystem.GetAimPosition();
-                CmdAbility1(aimPosition);
+                DropTotem();
             }
-        }
-        
-        if (Input.GetKeyDown(ability2Key) && isAttackEnabled && aimingSystem != null)
-        {
-            if (playerCombat != null)
+            else
             {
-                Vector3 aimPosition = aimingSystem.GetAimPosition();
-                CmdAbility2(aimPosition);
+                TryPickUpTotem();
             }
-        }
-        
-        if (Input.GetKeyDown(ultimateKey) && isAttackEnabled && aimingSystem != null)
-        {
-            if (playerCombat != null)
-            {
-                Vector3 aimPosition = aimingSystem.GetAimPosition();
-                CmdUltimateAbility(aimPosition);
-            }
-        }
-        
-        if (Input.GetKeyDown(pickupKey) && !isCarryingTotem)
-        {
-            StartTotemPickup();
-        }
-        
-        if (Input.GetKeyUp(pickupKey) && isPickingUpTotem)
-        {
-            CancelTotemPickup();
         }
         
         if (Input.GetKeyDown(dropKey))
         {
-            CmdDropTotem();
-        }
-        
-        if (Input.GetKeyDown(pauseKey))
-        {
-            TogglePause();
+            DropTotem();
         }
     }
     
-    [Command]
-    private void CmdPrimaryAttack(Vector3 targetPosition)
+    private void PerformAttack()
     {
-        if (playerCombat != null)
+        if (playerCombat != null && aimingSystem != null)
         {
-            bool attackPerformed = playerCombat.PrimaryAttack(targetPosition);
+            Vector3 aimPosition = aimingSystem.GetAimPosition();
+            bool attackPerformed = playerCombat.PrimaryAttack(aimPosition);
+            
             if (attackPerformed)
             {
-                RpcPlayAttackAnimation();
+                lastAttackTime = Time.time;
             }
         }
     }
     
-    [Command]
-    private void CmdAbility1(Vector3 targetPosition)
+    private void UseAbility(int abilityIndex)
     {
-        if (playerCombat != null)
+        if (playerCombat != null && aimingSystem != null)
         {
-            playerCombat.UseAbility(0, targetPosition);
+            Vector3 aimPosition = aimingSystem.GetAimPosition();
+            playerCombat.UseAbility(abilityIndex, aimPosition);
         }
     }
     
-    [Command]
-    private void CmdAbility2(Vector3 targetPosition)
+    private void UseUltimate()
     {
-        if (playerCombat != null)
+        if (playerCombat != null && aimingSystem != null)
         {
-            playerCombat.UseAbility(1, targetPosition);
-        }
-    }
-    
-    [Command]
-    private void CmdUltimateAbility(Vector3 targetPosition)
-    {
-        if (playerCombat != null)
-        {
-            playerCombat.UseUltimate(targetPosition);
-        }
-    }
-    
-    [Command]
-    private void CmdDropTotem()
-    {
-        if (currentTotem != null)
-        {
-            currentTotem.DropTotem(false);
-            currentTotem = null;
-            isCarryingTotem = false;
-            syncIsCarrying = false;
-        }
-    }
-    
-    [Command]
-    private void CmdSetPlayerName(string name)
-    {
-        playerName = name;
-    }
-    
-    [ClientRpc]
-    private void RpcPlayAttackAnimation()
-    {
-        if (animator != null)
-        {
-            animator.SetTrigger("Attack");
-            animator.SetBool("IsAttacking", true);
-            
-            Invoke(nameof(ResetAttackAnimation), 0.5f);
-        }
-    }
-    
-    private void ResetAttackAnimation()
-    {
-        if (animator != null)
-        {
-            animator.SetBool("IsAttacking", false);
-        }
-    }
-    
-    private void CheckGround()
-    {
-        if (characterController != null && characterController.enabled)
-        {
-            isGrounded = characterController.isGrounded;
-        }
-        else
-        {
-            float rayLength = 0.2f;
-            Vector3 rayOrigin = transform.position + Vector3.up * 0.1f;
-            isGrounded = Physics.Raycast(rayOrigin, Vector3.down, rayLength);
-        }
-        
-        if (isGrounded && velocity.y < 0)
-        {
-            velocity.y = -2f;
-        }
-    }
-    
-    private void ApplyGravity()
-    {
-        if (!isGrounded)
-        {
-            velocity.y += gravity * Time.deltaTime;
-        }
-        
-        if (characterController != null && characterController.enabled)
-        {
-            characterController.Move(velocity * Time.deltaTime);
+            Vector3 aimPosition = aimingSystem.GetAimPosition();
+            playerCombat.UseUltimate(aimPosition);
         }
     }
     
@@ -361,149 +261,36 @@ public class NetworkPlayerController : NetworkBehaviour
             Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
             
-            Vector3 movement = moveDirection * moveSpeed * Time.deltaTime;
+            Vector3 movement = transform.forward * moveSpeed * Time.deltaTime;
             
-            if (characterController != null)
+            if (characterController != null && characterController.enabled)
             {
+                movement.y = -9.81f * Time.deltaTime;
                 characterController.Move(movement);
             }
-            
-            if (networkAnimator != null && networkAnimator.animator != null)
+            else
             {
-                networkAnimator.animator.SetFloat("Speed", moveDirection.magnitude);
-            }
-        }
-        else
-        {
-            if (networkAnimator != null && networkAnimator.animator != null)
-            {
-                networkAnimator.animator.SetFloat("Speed", 0f);
+                transform.position += movement;
             }
         }
     }
     
-    private void StartTotemPickup()
+    private void TryPickUpTotem()
     {
-        if (isCarryingTotem || isPickingUpTotem) return;
+        if (IsCarryingTotem()) return;
         
-        totemToPickup = FindClosestTotem();
-        
-        if (totemToPickup != null)
+        if (totemInteraction != null)
         {
-            isPickingUpTotem = true;
-            totemPickupTimer = 0f;
-            
-            if (totemPickupSlider != null)
-            {
-                totemPickupSlider.gameObject.SetActive(true);
-                totemPickupSlider.value = 0f;
-            }
-            
-            moveSpeed *= 0.5f;
-            rotationSpeed *= 0.5f;
+            totemInteraction.CmdTryPickUp();
         }
     }
     
-    private void UpdateTotemPickup()
+    public void DropTotem()
     {
-        if (!isPickingUpTotem) return;
-        
-        if (totemToPickup == null || totemToPickup.IsBeingCarried())
+        if (totemInteraction != null)
         {
-            CancelTotemPickup();
-            return;
+            totemInteraction.CmdDropTotem();
         }
-        
-        float distance = Vector3.Distance(transform.position, totemToPickup.transform.position);
-        if (distance > 2f)
-        {
-            CancelTotemPickup();
-            return;
-        }
-        
-        totemPickupTimer += Time.deltaTime;
-        
-        if (totemPickupSlider != null)
-        {
-            totemPickupSlider.value = totemPickupTimer / totemPickupTime;
-        }
-        
-        if (totemPickupTimer >= totemPickupTime)
-        {
-            FinishTotemPickup();
-        }
-    }
-    
-    private void FinishTotemPickup()
-    {
-        if (totemToPickup != null)
-        {
-            CmdPickupTotem(totemToPickup.gameObject);
-        }
-        
-        CancelTotemPickup();
-    }
-    
-    [Command]
-    private void CmdPickupTotem(GameObject totemObject)
-    {
-        NetworkTotemController totem = totemObject.GetComponent<NetworkTotemController>();
-        if (totem != null)
-        {
-            bool success = totem.TryPickUp(netIdentity);
-            if (success)
-            {
-                currentTotem = totem;
-                isCarryingTotem = true;
-                syncIsCarrying = true;
-                RpcOnPickupTotem();
-            }
-        }
-    }
-    
-    [ClientRpc]
-    private void RpcOnPickupTotem()
-    {
-        if (isLocalPlayer)
-        {
-            Debug.Log("Вы подобрали тотем!");
-        }
-    }
-    
-    private void CancelTotemPickup()
-    {
-        isPickingUpTotem = false;
-        totemPickupTimer = 0f;
-        totemToPickup = null;
-        
-        moveSpeed = 8f;
-        rotationSpeed = 10f;
-        
-        if (totemPickupSlider != null)
-        {
-            totemPickupSlider.gameObject.SetActive(false);
-        }
-    }
-    
-    private NetworkTotemController FindClosestTotem()
-    {
-        var totems = FindObjectsByType<NetworkTotemController>(FindObjectsSortMode.None);
-        float closestDistance = float.MaxValue;
-        NetworkTotemController closestTotem = null;
-        
-        foreach (var totem in totems)
-        {
-            if (totem.IsBeingCarried()) continue;
-            
-            float distance = Vector3.Distance(transform.position, totem.transform.position);
-            if (distance <= 2f && distance < closestDistance)
-            {
-                closestDistance = distance;
-                closestTotem = totem;
-            }
-        }
-        
-        return closestTotem;
     }
     
     private void UpdateAnimations()
@@ -512,65 +299,92 @@ public class NetworkPlayerController : NetworkBehaviour
         
         float moveSpeedAnimation = Mathf.Clamp01(moveDirection.magnitude);
         animator.SetFloat("Speed", moveSpeedAnimation);
-        animator.SetBool("IsCarrying", syncIsCarrying);
+        
+        bool isCarrying = IsCarryingTotem();
+        animator.SetBool("IsCarrying", isCarrying);
     }
     
-    private void OnIsCarryingChanged(bool oldValue, bool newValue)
+    public void UpdateCarryingAnimation(bool isCarrying)
     {
-        syncIsCarrying = newValue;
-        
         if (animator != null)
         {
-            animator.SetBool("IsCarrying", newValue);
+            animator.SetBool("IsCarrying", isCarrying);
         }
-        
-        isCarryingTotem = newValue;
     }
     
-    private void OnPlayerNameChanged(string oldName, string newName)
-    {
-        playerName = newName;
-        gameObject.name = newName;
-    }
-    
-    private void TogglePause()
+    public void OnPlayerDeath()
     {
         if (!isLocalPlayer) return;
         
-        isPaused = !isPaused;
+        // Отключаем управление
+        EnableControls(false);
         
-        if (isPaused)
+        // Отключаем компоненты
+        if (playerCombat != null)
+            playerCombat.enabled = false;
+            
+        if (aimingSystem != null)
+            aimingSystem.enabled = false;
+        
+        // Если несем тотем - сбрасываем его на сервере
+        if (totemInteraction != null)
         {
-            Time.timeScale = 0f;
-            Cursor.visible = true;
-            Cursor.lockState = CursorLockMode.None;
-            
-            if (aimingSystem != null && aimingSystem.crosshairUI != null)
-            {
-                aimingSystem.crosshairUI.gameObject.SetActive(false);
-            }
-            
-            if (gameManager != null)
-            {
-                gameManager.TogglePause();
-            }
+            totemInteraction.OnPlayerDeath();
         }
-        else
+        
+        // Отключаем контроллер
+        if (characterController != null)
+            characterController.enabled = false;
+        
+        // Проигрываем анимацию смерти
+        if (animator != null)
         {
-            Time.timeScale = 1f;
-            SetupCursor();
-            
-            if (gameManager != null)
-            {
-                gameManager.TogglePause();
-            }
+            animator.SetTrigger("Die");
+            animator.SetBool("IsDead", true);
         }
+        
+        // Включаем курсор
+        Cursor.visible = true;
+        Cursor.lockState = CursorLockMode.None;
+        
+        Debug.Log($"{gameObject.name} умер!");
+    }
+    
+    public void OnPlayerRespawn()
+    {
+        if (!isLocalPlayer) return;
+        
+        // Включаем управление
+        EnableControls(true);
+        
+        // Включаем компоненты
+        if (playerCombat != null)
+            playerCombat.enabled = true;
+            
+        if (aimingSystem != null)
+            aimingSystem.enabled = true;
+        
+        // Включаем контроллер
+        if (characterController != null)
+            characterController.enabled = true;
+        
+        // Сбрасываем анимацию смерти
+        if (animator != null)
+        {
+            animator.SetBool("IsDead", false);
+            animator.SetTrigger("Respawn");
+        }
+        
+        // Скрываем курсор
+        Cursor.visible = false;
+        Cursor.lockState = CursorLockMode.Confined;
+        
+        Debug.Log($"{gameObject.name} возродился!");
     }
     
     public void EnableControls(bool enable)
     {
-        if (!isLocalPlayer) return;
-        
+        controlsEnabled = enable;
         isMovementEnabled = enable;
         isAttackEnabled = enable;
         
@@ -579,26 +393,46 @@ public class NetworkPlayerController : NetworkBehaviour
             characterController.enabled = enable;
         }
         
-        if (!enable)
+        if (playerCombat != null)
         {
-            CancelTotemPickup();
+            playerCombat.enabled = enable;
         }
+        
+        Debug.Log($"Controls {(enable ? "enabled" : "disabled")} for {gameObject.name}");
     }
     
-    public void OnPlayerDeath()
+    public bool IsCarryingTotem()
     {
-        if (currentTotem != null)
+        return totemInteraction != null && totemInteraction.IsCarrying;
+    }
+    
+    private void OnDestroy()
+    {
+        if (isBeingDestroyed) return;
+        isBeingDestroyed = true;
+        
+        if (isApplicationQuitting) return;
+        
+        if (isLocalPlayer && totemPickupUIInstance != null)
         {
-            CmdForceDropTotem();
+            Destroy(totemPickupUIInstance);
         }
         
-        EnableControls(false);
+        if (isLocalPlayer && NetworkClient.active && !isApplicationQuitting)
+        {
+            if (IsCarryingTotem())
+            {
+                OnPlayerDeath();
+            }
+        }
         
-        if (playerCombat != null)
-            playerCombat.enabled = false;
-        if (aimingSystem != null)
-            aimingSystem.enabled = false;
-            
+        CancelInvoke();
+    }
+    
+    public override void OnStopClient()
+    {
+        base.OnStopClient();
+        
         if (isLocalPlayer)
         {
             Cursor.visible = true;
@@ -606,15 +440,26 @@ public class NetworkPlayerController : NetworkBehaviour
         }
     }
     
-    [Command]
-    private void CmdForceDropTotem()
+    public override void OnStartAuthority()
     {
-        if (currentTotem != null)
-        {
-            currentTotem.DropTotem(true, Vector3.up * 2f + transform.forward * 3f);
-            currentTotem = null;
-            isCarryingTotem = false;
-            syncIsCarrying = false;
-        }
+        base.OnStartAuthority();
+        Debug.Log($"Authority started for {gameObject.name}");
+    }
+    
+    public override void OnStopAuthority()
+    {
+        base.OnStopAuthority();
+        Debug.Log($"Authority stopped for {gameObject.name}");
+    }
+    
+    public void DebugLogState()
+    {
+        Debug.Log($"NetworkPlayerController State:");
+        Debug.Log($"- IsLocalPlayer: {isLocalPlayer}");
+        Debug.Log($"- IsMovementEnabled: {isMovementEnabled}");
+        Debug.Log($"- IsAttackEnabled: {isAttackEnabled}");
+        Debug.Log($"- IsCarryingTotem: {IsCarryingTotem()}");
+        Debug.Log($"- Health: {healthSystem?.currentHealth}/{healthSystem?.maxHealth}");
+        Debug.Log($"- Position: {transform.position}");
     }
 }

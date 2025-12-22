@@ -1,8 +1,9 @@
 using UnityEngine;
+using Mirror;
 
 public class AttackRangeDetector : MonoBehaviour
 {
-    public PlayerController playerController;
+    public NetworkPlayerController playerController;
     
     private void OnTriggerEnter(Collider other)
     {

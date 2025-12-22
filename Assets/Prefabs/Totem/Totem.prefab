@@ -14,8 +14,9 @@ GameObject:
   - component: {fileID: 4396593186992108607}
   - component: {fileID: -4343735888487387262}
   - component: {fileID: 5587721397435379657}
-  - component: {fileID: 7896017147343021304}
   - component: {fileID: 281905926031450156}
+  - component: {fileID: 6108853002500128349}
+  - component: {fileID: 971530836813518110}
   m_Layer: 0
   m_Name: Totem
   m_TagString: Untagged
@@ -161,28 +162,7 @@ MonoBehaviour:
   serverOnly: 0
   visibility: 0
   hasSpawned: 0
---- !u!114 &7896017147343021304
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6171087811429219056}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0b7b391c56b35dc49931197ac6fee96a, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::NetworkTotemController
-  syncDirection: 0
-  syncMode: 0
-  syncInterval: 0
-  pickUpRange: 2
-  dropForce: 5
-  baseScorePerSecond: 1
-  scoreMultiplierIncrease: 0.1
-  maxMultiplier: 3
-  carryOffset: {x: 0, y: 1.5, z: -0.5}
-  carryRotation: {x: 0, y: 0, z: 0}
+  localPlayerAuthority: 0
 --- !u!114 &281905926031450156
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -216,3 +196,38 @@ MonoBehaviour:
   showGizmos: 0
   showOverlay: 0
   overlayColor: {r: 0, g: 0, b: 0, a: 0.5}
+--- !u!114 &6108853002500128349
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6171087811429219056}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 292585feb5749814da9b461a786d5f04, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TotemController
+  pickUpRange: 2
+  dropForce: 5
+  baseScorePerSecond: 1
+  scoreMultiplierIncrease: 0.1
+  maxMultiplier: 3
+  pickupUI: {fileID: 971530836813518110}
+--- !u!114 &971530836813518110
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6171087811429219056}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 27b9d5358201f1248b67d33a9e223fdf, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TotemPickupUI
+  pickupSlider: {fileID: 7476782589122759425, guid: 30c7d0e99df6fe14192d3565e35e81dd, type: 3}
+  pickupText: {fileID: 0}
+  canvasGroup: {fileID: 2971365498699623460, guid: 30c7d0e99df6fe14192d3565e35e81dd, type: 3}
+  fadeSpeed: 5
+  showDuration: 2
