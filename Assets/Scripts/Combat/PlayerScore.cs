@@ -1,47 +1,63 @@
 using UnityEngine;
-using Mirror;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
 
 public class PlayerScore : NetworkBehaviour
 {
     [Header("Player Info")]
-    [SyncVar]
-    public int playerId = 0; // 0 для первого игрока, 1 для второго и т.д.
+    public readonly SyncVar<int> playerId = new SyncVar<int>(0);
     
     [Header("Score")]
-    [SyncVar]
-    public int score = 0;
+    public readonly SyncVar<int> score = new SyncVar<int>(0);
     
     private GameManager gameManager;
     
-    private void Start()
+    public override void OnStartClient()
     {
+        base.OnStartClient();
         gameManager = FindFirstObjectByType<GameManager>();
+        
+        // Подписываемся на изменения
+        score.OnChange += OnScoreChanged;
     }
     
-    [Command]
+    public override void OnStopClient()
+    {
+        base.OnStopClient();
+        score.OnChange -= OnScoreChanged;
+    }
+    
+    [ServerRpc]
     public void CmdAddScore(int points)
     {
-        score += points;
-        RpcUpdateScore(score);
+        AddScoreInternal(points);
+    }
+    
+    [Server]
+    private void AddScoreInternal(int points)
+    {
+        score.Value += points;
         
-        if (gameManager != null && isServer)
+        if (gameManager != null)
         {
             gameManager.AddScore(points);
         }
     }
     
-    [ClientRpc]
-    void RpcUpdateScore(int newScore)
-    {
-        score = newScore;
-    }
-    
     // Вызывается на клиенте для добавления очков
     public void AddScore(int points)
     {
-        if (isLocalPlayer)
+        if (base.IsOwner)
         {
             CmdAddScore(points);
         }
+    }
+    
+    /// <summary>
+    /// Обработчик изменения SyncVar
+    /// </summary>
+    private void OnScoreChanged(int prev, int next, bool asServer)
+    {
+        Debug.Log($"Player {gameObject.name} score: {prev} -> {next}");
     }
 }

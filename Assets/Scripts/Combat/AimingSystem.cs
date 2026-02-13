@@ -1,8 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
-using Mirror;
+using FishNet.Object;
 
-public class AimingSystem : NetworkBehaviour
+public class AimingSystem : MonoBehaviour
 {
     [Header("References")]
     public Camera playerCamera;
@@ -38,7 +38,7 @@ public class AimingSystem : NetworkBehaviour
     
     void InitializeCrosshair()
     {
-        if (crosshairInitialized || !isLocalPlayer) return;
+        if (crosshairInitialized) return;
         
         if (crosshairObject == null)
         {
@@ -63,7 +63,7 @@ public class AimingSystem : NetworkBehaviour
             crosshairObject.SetActive(true);
             crosshairInitialized = true;
             
-            Debug.Log("Прицел инициализирован");
+            Debug.Log("Crosshair initialized");
         }
     }
     
@@ -119,13 +119,11 @@ public class AimingSystem : NetworkBehaviour
     
     void Update()
     {
-        if (!isLocalPlayer) return;
-        
         if (!crosshairInitialized)
             InitializeCrosshair();
             
-        // ОПТИМИЗАЦИЯ: Обновляем прицел не каждый кадр
-        if (Time.frameCount % 2 == 0) // Каждый второй кадр
+        // Оптимизация: Обновляем прицел не каждый кадр
+        if (Time.frameCount % 2 == 0)
         {
             UpdateAim();
         }
@@ -142,7 +140,7 @@ public class AimingSystem : NetworkBehaviour
         // Луч от камеры через курсор
         Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
         
-        // ОПТИМИЗАЦИЯ: Используем NonAlloc версию Raycast
+        // Используем NonAlloc версию Raycast
         int hitCount = Physics.RaycastNonAlloc(ray, raycastHits, maxAimDistance, playerLayerMask);
         
         for (int i = 0; i < hitCount; i++)
@@ -153,7 +151,7 @@ public class AimingSystem : NetworkBehaviour
             if (hitObject.CompareTag("Player") && hitObject != gameObject)
             {
                 aimedPlayer = hitObject;
-                // ИСПРАВЛЕНИЕ: Целимся в центр игрока (Character Controller высота)
+                // Целимся в центр игрока
                 CharacterController controller = aimedPlayer.GetComponent<CharacterController>();
                 if (controller != null)
                 {
@@ -191,7 +189,7 @@ public class AimingSystem : NetworkBehaviour
         crosshairImage.color = aimedPlayer != null ? enemyColor : normalColor;
         
         // Обновляем позицию прицела
-        if (crosshairRect != null && playerCamera != null)
+        if (crosshairRect != null)
         {
             crosshairRect.position = Input.mousePosition;
         }
@@ -212,7 +210,7 @@ public class AimingSystem : NetworkBehaviour
         return aimedPlayer != null;
     }
     
-    public override void OnStopLocalPlayer()
+    void OnDestroy()
     {
         if (crosshairObject != null)
         {

@@ -1,11 +1,14 @@
 using UnityEngine;
-using Mirror;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
+using FishNet.Connection;
 using System.Collections;
 
 public class HealthSystem : NetworkBehaviour
 {
-    [SyncVar(hook = nameof(OnHealthChanged))]
-    public float currentHealth = 100f;
+    // FishNet 4.x SyncVar
+    public readonly SyncVar<float> currentHealth = new SyncVar<float>(100f);
+    
     public float maxHealth = 100f;
 
     private NetworkPlayerController playerController;
@@ -15,62 +18,74 @@ public class HealthSystem : NetworkBehaviour
     private float lastDamageTime = 0f;
     private const float damageCooldown = 0.1f;
 
-    private void Start()
+    public override void OnStartNetwork()
     {
+        base.OnStartNetwork();
+        
         playerController = GetComponent<NetworkPlayerController>();
-        if (isServer)
+        
+        // Подписываемся на изменения
+        currentHealth.OnChange += OnHealthChanged;
+        
+        if (base.IsServerInitialized)
         {
-            currentHealth = maxHealth;
+            currentHealth.Value = maxHealth;
         }
+    }
+    
+    public override void OnStopNetwork()
+    {
+        base.OnStopNetwork();
+        currentHealth.OnChange -= OnHealthChanged;
     }
 
     public void TakeDamage(float damage, GameObject source)
     {
-        if (currentHealth <= 0) return;
+        if (currentHealth.Value <= 0) return;
         
-        Debug.Log($"TakeDamage вызван! Источник: {source?.name}, Урон: {damage}, isServer: {isServer}, isLocalPlayer: {isLocalPlayer}");
+        Debug.Log($"TakeDamage called! Source: {source?.name}, Damage: {damage}, IsServer: {base.IsServerInitialized}, IsOwner: {base.IsOwner}");
         
         // Проверка кулдауна
         if (Time.time - lastDamageTime < damageCooldown) return;
         
-        if (isServer)
+        if (base.IsServerInitialized)
         {
             ApplyDamage(damage, source);
         }
-        else if (isLocalPlayer)
+        else if (base.IsOwner)
         {
             CmdTakeDamage(damage, source);
         }
     }
 
-    [Command]
+    [ServerRpc]
     void CmdTakeDamage(float damage, GameObject source)
     {
-        Debug.Log($"CmdTakeDamage получен на сервере для {gameObject.name}, урон: {damage}");
+        Debug.Log($"CmdTakeDamage received on server for {gameObject.name}, damage: {damage}");
         ApplyDamage(damage, source);
     }
 
     [Server]
     void ApplyDamage(float damage, GameObject source)
     {
-        Debug.Log($"ApplyDamage на сервере: {gameObject.name} получает {damage} урона");
+        Debug.Log($"ApplyDamage on server: {gameObject.name} takes {damage} damage");
         
         lastDamageTime = Time.time;
-        currentHealth -= damage;
+        currentHealth.Value -= damage;
         
-        if (currentHealth <= 0)
+        if (currentHealth.Value <= 0)
         {
-            currentHealth = 0;
+            currentHealth.Value = 0;
             RpcDie(source);
         }
         
-        Debug.Log($"Здоровье {gameObject.name}: {currentHealth}");
+        Debug.Log($"Health of {gameObject.name}: {currentHealth.Value}");
     }
 
-    [ClientRpc]
+    [ObserversRpc]
     void RpcDie(GameObject killer)
     {
-        Debug.Log($"RpcDie вызван для {gameObject.name}");
+        Debug.Log($"RpcDie called for {gameObject.name}");
         
         if (deathEffect != null) 
         {
@@ -90,7 +105,7 @@ public class HealthSystem : NetworkBehaviour
             totemInteraction.OnPlayerDeath();
         }
         
-        if (isServer)
+        if (base.IsServerInitialized)
         {
             StartCoroutine(ServerRespawn(3f));
         }
@@ -105,19 +120,18 @@ public class HealthSystem : NetworkBehaviour
     [Server]
     public void Respawn()
     {
-        currentHealth = maxHealth;
+        currentHealth.Value = maxHealth;
         lastDamageTime = 0f;
         
-        MyNetworkManager networkManager = FindFirstObjectByType<MyNetworkManager>();
+        MyNetworkManager networkManager = MyNetworkManager.Instance;
         
         if (networkManager != null)
         {
             Transform spawnPoint = networkManager.GetRandomSpawnPoint();
             if (spawnPoint != null)
             {
-                transform.position = spawnPoint.position;
-                transform.rotation = spawnPoint.rotation;
-                Debug.Log($"{gameObject.name} возрожден на спавн-поинте: {spawnPoint.name}");
+                Teleport(spawnPoint.position, spawnPoint.rotation);
+                Debug.Log($"{gameObject.name} respawned at spawn point: {spawnPoint.name}");
             }
             else
             {
@@ -126,7 +140,7 @@ public class HealthSystem : NetworkBehaviour
                     2f, 
                     Random.Range(-10f, 10f)
                 );
-                transform.position = randomPos;
+                Teleport(randomPos, Quaternion.identity);
             }
         }
         else
@@ -136,13 +150,33 @@ public class HealthSystem : NetworkBehaviour
                 2f, 
                 Random.Range(-10f, 10f)
             );
-            transform.position = randomPos;
+            Teleport(randomPos, Quaternion.identity);
         }
         
         RpcRespawn();
     }
+    
+    /// <summary>
+    /// Телепортирует игрока (только на сервере)
+    /// </summary>
+    [Server]
+    private void Teleport(Vector3 position, Quaternion rotation)
+    {
+        transform.position = position;
+        transform.rotation = rotation;
+        
+        // Отправляем клиентам обновление позиции
+        TargetTeleport(Owner, position, rotation);
+    }
+    
+    [TargetRpc]
+    private void TargetTeleport(NetworkConnection conn, Vector3 position, Quaternion rotation)
+    {
+        transform.position = position;
+        transform.rotation = rotation;
+    }
 
-    [ClientRpc]
+    [ObserversRpc]
     void RpcRespawn()
     {
         if (playerController != null)
@@ -150,11 +184,14 @@ public class HealthSystem : NetworkBehaviour
             playerController.OnPlayerRespawn();
         }
         
-        Debug.Log($"{gameObject.name} возродился!");
+        Debug.Log($"{gameObject.name} respawned!");
     }
 
-    private void OnHealthChanged(float oldHealth, float newHealth)
+    /// <summary>
+    /// Хук для SyncVar - вызывается при изменении здоровья
+    /// </summary>
+    private void OnHealthChanged(float prev, float next, bool asServer)
     {
-        Debug.Log($"{gameObject.name}: Здоровье изменилось с {oldHealth} на {newHealth}");
+        Debug.Log($"{gameObject.name}: Health changed from {prev} to {next}");
     }
 }

@@ -1,5 +1,6 @@
 using UnityEngine;
-using Mirror;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using System.Collections.Generic;
 
 public class TotemController : NetworkBehaviour
@@ -12,12 +13,9 @@ public class TotemController : NetworkBehaviour
     public float scoreMultiplierIncrease = 0.1f;
     public float maxMultiplier = 3f;
     
-    // Синхронизированные состояния
-    [SyncVar(hook = nameof(OnCarrierChanged))]
-    private uint currentCarrierId = 0;
-    
-    [SyncVar]
-    private bool isBeingCarriedSync = false;
+    // FishNet 4.x SyncVar
+    public readonly SyncVar<int> currentCarrierId = new SyncVar<int>(0);
+    public readonly SyncVar<bool> isBeingCarriedSync = new SyncVar<bool>(false);
     
     // Локальные состояния
     private float carryTime = 0f;
@@ -31,26 +29,46 @@ public class TotemController : NetworkBehaviour
     // Статический список всех тотемов
     private static List<TotemController> allTotems = new List<TotemController>();
     
-    private void Awake()
+    public override void OnStartNetwork()
     {
+        base.OnStartNetwork();
+        
         rb = GetComponent<Rigidbody>();
         totemCollider = GetComponent<Collider>();
         
+        // Подписываемся на изменения
+        currentCarrierId.OnChange += OnCarrierChanged;
+    }
+    
+    public override void OnStopNetwork()
+    {
+        base.OnStopNetwork();
+        currentCarrierId.OnChange -= OnCarrierChanged;
+        allTotems.Remove(this);
+    }
+    
+    private void OnEnable()
+    {
         // Добавляем в список
         if (!allTotems.Contains(this))
             allTotems.Add(this);
     }
     
+    private void OnDisable()
+    {
+        allTotems.Remove(this);
+    }
+    
     private void Update()
     {
-        if (isServer && isBeingCarriedSync)
+        if (base.IsServerInitialized && isBeingCarriedSync.Value)
         {
             carryTime += Time.deltaTime;
             currentMultiplier = Mathf.Min(1f + (carryTime * scoreMultiplierIncrease), maxMultiplier);
         }
         
         // Плавное следование за носителем
-        if (isBeingCarriedSync && currentCarrierObject != null)
+        if (isBeingCarriedSync.Value && currentCarrierObject != null)
         {
             UpdateCarriedPosition();
         }
@@ -84,16 +102,16 @@ public class TotemController : NetworkBehaviour
     
     // ТОЛЬКО на сервере вызывается, когда игрок хочет поднять тотем
     [Server]
-    public void ServerPickUp(uint carrierId)
+    public void ServerPickUp(int carrierId)
     {
-        if (currentCarrierId != 0 || isBeingCarriedSync) 
+        if (currentCarrierId.Value != 0 || isBeingCarriedSync.Value) 
         {
-            Debug.Log($"[SERVER] Тотем уже у игрока {currentCarrierId}");
+            Debug.Log($"[SERVER] Totem already carried by player {currentCarrierId.Value}");
             return;
         }
         
-        currentCarrierId = carrierId;
-        isBeingCarriedSync = true;
+        currentCarrierId.Value = carrierId;
+        isBeingCarriedSync.Value = true;
         carryTime = 0f;
         currentMultiplier = 1f;
         
@@ -108,21 +126,21 @@ public class TotemController : NetworkBehaviour
             totemCollider.enabled = false;
         }
         
-        Debug.Log($"[SERVER] Тотем поднят игроком {carrierId}");
+        Debug.Log($"[SERVER] Totem picked up by player {carrierId}");
     }
     
     // ТОЛЬКО на сервере вызывается, когда игрок хочет бросить тотем
     [Server]
-    public void ServerDrop(uint carrierId, bool applyForce = false)
+    public void ServerDrop(int carrierId, bool applyForce = false)
     {
-        if (currentCarrierId != carrierId) 
+        if (currentCarrierId.Value != carrierId) 
         {
-            Debug.Log($"[SERVER] Игрок {carrierId} не несет тотем");
+            Debug.Log($"[SERVER] Player {carrierId} is not carrying this totem");
             return;
         }
         
-        currentCarrierId = 0;
-        isBeingCarriedSync = false;
+        currentCarrierId.Value = 0;
+        isBeingCarriedSync.Value = false;
         carryTime = 0f;
         currentMultiplier = 1f;
         
@@ -143,39 +161,63 @@ public class TotemController : NetworkBehaviour
             totemCollider.enabled = true;
         }
         
-        Debug.Log($"[SERVER] Тотем сброшен игроком {carrierId}");
+        Debug.Log($"[SERVER] Totem dropped by player {carrierId}");
     }
     
     // Хук при изменении носителя
-    private void OnCarrierChanged(uint oldCarrierId, uint newCarrierId)
+    private void OnCarrierChanged(int prevCarrierId, int newCarrierId, bool asServer)
     {
-        Debug.Log($"[HOOK] Carrier changed from {oldCarrierId} to {newCarrierId}");
+        Debug.Log($"[HOOK] Carrier changed from {prevCarrierId} to {newCarrierId}");
         
         if (newCarrierId == 0)
         {
             currentCarrierObject = null;
-        }
-        else if (NetworkClient.spawned.TryGetValue(newCarrierId, out NetworkIdentity identity))
-        {
-            currentCarrierObject = identity.gameObject;
             
-            // На клиентах отключаем физику при подборе
-            if (!isServer && rb != null)
+            // На клиентах включаем физику при сбросе
+            if (!base.IsServerInitialized && rb != null)
             {
-                rb.isKinematic = true;
+                rb.isKinematic = false;
             }
         }
+        else
+        {
+            // Находим объект игрока по ObjectId
+            NetworkObject playerObject = FindPlayerById(newCarrierId);
+            if (playerObject != null)
+            {
+                currentCarrierObject = playerObject.gameObject;
+                
+                // На клиентах отключаем физику при подборе
+                if (!base.IsServerInitialized && rb != null)
+                {
+                    rb.isKinematic = true;
+                }
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Находит игрока по ObjectId
+    /// </summary>
+    private NetworkObject FindPlayerById(int objectId)
+    {
+        foreach (var netObj in FindObjectsByType<NetworkObject>(FindObjectsSortMode.None))
+        {
+            if (netObj.ObjectId == objectId)
+                return netObj;
+        }
+        return null;
     }
     
     // Геттеры
     public bool IsBeingCarried()
     {
-        return currentCarrierId != 0;
+        return currentCarrierId.Value != 0;
     }
     
-    public uint GetCarrierId()
+    public int GetCarrierId()
     {
-        return currentCarrierId;
+        return currentCarrierId.Value;
     }
     
     public float GetCarryMultiplier()
@@ -191,6 +233,7 @@ public class TotemController : NetworkBehaviour
         
         foreach (var totem in allTotems)
         {
+            if (totem == null) continue;
             if (totem.IsBeingCarried()) continue;
             
             float distance = Vector3.Distance(position, totem.transform.position);
@@ -204,8 +247,4 @@ public class TotemController : NetworkBehaviour
         return closest;
     }
     
-    private void OnDestroy()
-    {
-        allTotems.Remove(this);
-    }
 }

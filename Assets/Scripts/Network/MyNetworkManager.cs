@@ -1,97 +1,239 @@
 using UnityEngine;
-using Mirror;
+using FishNet;
+using FishNet.Managing;
+using FishNet.Managing.Scened;
+using FishNet.Transporting;
+using FishNet.Connection;
+using FishNet.Object;
 using System.Collections.Generic;
 
-public class MyNetworkManager : NetworkManager
+/// <summary>
+/// Network Manager для FishNet
+/// В FishNet NetworkManager sealed - используем композицию вместо наследования
+/// </summary>
+public class MyNetworkManager : MonoBehaviour
 {
     [Header("Spawn Points")]
     public List<Transform> manualSpawnPoints = new List<Transform>();
     
-    public override void OnServerAddPlayer(NetworkConnectionToClient conn)
+    [Header("Player Prefab")]
+    public NetworkObject playerPrefab;
+    
+    public static MyNetworkManager Instance { get; private set; }
+    
+    // Ссылка на FishNet NetworkManager
+    private NetworkManager _networkManager;
+    
+    // Отслеживание спавненных игроков
+    private HashSet<int> spawnedPlayers = new HashSet<int>();
+    
+    private void Awake()
     {
-        base.OnServerAddPlayer(conn);
-        
-        GameObject player = conn.identity.gameObject;
-        NetworkIdentity netId = player.GetComponent<NetworkIdentity>();
-        
-        // Регистрируем игрока в трекере MagicianClass
-        if (netId != null)
+        if (Instance == null)
         {
-            MagicianClass.RegisterPlayer(netId.netId, player.transform);
-            Debug.Log($"Игрок зарегистрирован в трекере: {player.name}, netId: {netId.netId}");
+            Instance = this;
+            _networkManager = GetComponent<NetworkManager>();
+            
+            // Убедимся что мы DontDestroyOnLoad
+            DontDestroyOnLoad(gameObject);
+            Debug.Log("[MyNetworkManager] Instance created and marked DontDestroyOnLoad");
         }
-        
-        // Инициализируем GameManager если нужно
-        GameManager gameManager = GameManager.Instance;
-        if (gameManager != null && gameManager.isServer)
+        else
         {
-            // Можно добавить игрока в список
+            Debug.LogWarning("[MyNetworkManager] Another instance exists, destroying this one");
+            Destroy(gameObject);
         }
-        
-        Debug.Log($"Player added: {player.name}, connectionId: {conn.connectionId}, netId: {netId?.netId}");
     }
     
-    public override void OnServerDisconnect(NetworkConnectionToClient conn)
+    private void OnEnable()
     {
-        // Удаляем игрока из трекера MagicianClass
-        if (conn.identity != null)
+        if (_networkManager != null)
         {
-            MagicianClass.UnregisterPlayer(conn.identity.netId);
-            Debug.Log($"Игрок удален из трекера: {conn.identity.name}, netId: {conn.identity.netId}");
+            _networkManager.ServerManager.OnRemoteConnectionState += OnRemoteConnectionState;
+            _networkManager.SceneManager.OnClientLoadedStartScenes += OnClientLoadedStartScenes;
+            Debug.Log("[MyNetworkManager] Subscribed to network events");
         }
-        
-        base.OnServerDisconnect(conn);
-        Debug.Log($"Player disconnected: {conn.connectionId}");
     }
     
-    public override void OnStartServer()
+    private void OnDisable()
     {
-        base.OnStartServer();
-        
-        // Очищаем трекер игроков при старте сервера
-        System.Reflection.FieldInfo field = typeof(MagicianClass).GetField("playerTransforms", 
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
-        
-        if (field != null)
+        if (_networkManager != null)
         {
-            System.Collections.Generic.Dictionary<uint, Transform> playerTransforms = 
-                field.GetValue(null) as System.Collections.Generic.Dictionary<uint, Transform>;
-            if (playerTransforms != null)
+            if (_networkManager.ServerManager != null)
             {
-                playerTransforms.Clear();
-                Debug.Log("Player tracker cleared on server start!");
+                _networkManager.ServerManager.OnRemoteConnectionState -= OnRemoteConnectionState;
             }
+            if (_networkManager.SceneManager != null)
+            {
+                _networkManager.SceneManager.OnClientLoadedStartScenes -= OnClientLoadedStartScenes;
+            }
+            Debug.Log("[MyNetworkManager] Unsubscribed from network events");
+        }
+    }
+    
+    private void OnRemoteConnectionState(NetworkConnection conn, RemoteConnectionStateArgs args)
+    {
+        if (args.ConnectionState == RemoteConnectionState.Stopped)
+        {
+            // Удаляем из списка спавненных
+            if (spawnedPlayers.Contains(conn.ClientId))
+            {
+                spawnedPlayers.Remove(conn.ClientId);
+            }
+            
+            if (conn.FirstObject != null)
+            {
+                MagicianClass.UnregisterPlayer(conn.FirstObject.ObjectId);
+                Debug.Log($"[MyNetworkManager] Player disconnected from tracker: {conn.FirstObject.ObjectId}");
+            }
+            
+            Debug.Log($"[MyNetworkManager] Player disconnected: ClientId={conn.ClientId}");
+        }
+        else if (args.ConnectionState == RemoteConnectionState.Started)
+        {
+            Debug.Log($"[MyNetworkManager] Player connected: ClientId={conn.ClientId}");
+            // НЕ спавним здесь! Ждём загрузки сцены через OnClientLoadedStartScenes
+        }
+    }
+    
+    /// <summary>
+    /// Вызывается когда клиент загрузил стартовые сцены
+    /// </summary>
+    private void OnClientLoadedStartScenes(NetworkConnection conn, bool asServer)
+    {
+        if (!asServer) 
+        {
+            Debug.Log("[MyNetworkManager] OnClientLoadedStartScenes called on client, ignoring");
+            return; // Только на сервере
         }
         
-        // Инициализируем спавн-поинты
-        InitializeSpawnPoints();
+        Debug.Log($"[MyNetworkManager] Client loaded start scenes: ClientId={conn.ClientId}, IsValid={conn.IsValid}");
         
-        Debug.Log("Server started!");
+        // Проверяем, не спавнили ли мы уже этого игрока
+        if (spawnedPlayers.Contains(conn.ClientId))
+        {
+            Debug.LogWarning($"[MyNetworkManager] Player {conn.ClientId} already spawned, skipping");
+            return;
+        }
+        
+        // Проверяем, валидно ли соединение
+        if (!conn.IsValid)
+        {
+            Debug.LogWarning($"[MyNetworkManager] Connection {conn.ClientId} is not valid, cannot spawn");
+            return;
+        }
+        
+        // КРИТИЧНО: Не спавним игрока если мы всё ещё в MainMenu
+        // Ждём пока загрузится игровая сцена
+        string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (currentScene == "MainMenu")
+        {
+            Debug.Log("[MyNetworkManager] Still in MainMenu, delaying player spawn until game scene loads...");
+            StartCoroutine(SpawnPlayerAfterSceneLoad(conn));
+            return;
+        }
+        
+        // Спавним игрока только если мы в игровой сцене
+        SpawnPlayer(conn);
     }
     
-    public override void OnStopServer()
+    /// <summary>
+    /// Корутина для спавна игрока после загрузки игровой сцены
+    /// </summary>
+    private System.Collections.IEnumerator SpawnPlayerAfterSceneLoad(NetworkConnection conn)
     {
-        base.OnStopServer();
-        Debug.Log("Server stopped!");
+        // Ждём пока сцена изменится с MainMenu на игровую
+        float timeout = 10f;
+        float elapsed = 0f;
+        
+        while (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "MainMenu" && elapsed < timeout)
+        {
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        
+        string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (currentScene == "MainMenu")
+        {
+            Debug.LogError("[MyNetworkManager] Timeout waiting for scene to load!");
+            yield break;
+        }
+        
+        // Даём немного времени на инициализацию сцены
+        yield return new WaitForSeconds(0.5f);
+        
+        Debug.Log($"[MyNetworkManager] Scene loaded: {currentScene}, now spawning player...");
+        
+        // Проверяем ещё раз что игрок ещё не спавнен
+        if (!spawnedPlayers.Contains(conn.ClientId) && conn.IsValid)
+        {
+            SpawnPlayer(conn);
+        }
     }
     
-    public override void OnClientConnect()
+    /// <summary>
+    /// Спавнит игрока для подключившегося клиента
+    /// </summary>
+    private void SpawnPlayer(NetworkConnection conn)
     {
-        base.OnClientConnect();
-        Debug.Log("Client connected to server!");
+        if (playerPrefab == null)
+        {
+            Debug.LogError("[MyNetworkManager] Player prefab not assigned!");
+            return;
+        }
+        
+        if (_networkManager == null || !_networkManager.IsServerStarted)
+        {
+            Debug.LogError("[MyNetworkManager] Not running as server, cannot spawn player!");
+            return;
+        }
+        
+        // Помечаем что мы спавним этого игрока
+        spawnedPlayers.Add(conn.ClientId);
+        
+        Transform spawnPoint = GetRandomSpawnPoint();
+        Vector3 spawnPosition = spawnPoint != null ? spawnPoint.position : Vector3.zero;
+        Quaternion spawnRotation = spawnPoint != null ? spawnPoint.rotation : Quaternion.identity;
+        
+        Debug.Log($"[MyNetworkManager] Spawning player for ClientId={conn.ClientId} at position {spawnPosition}");
+        
+        try
+        {
+            NetworkObject playerInstance = Instantiate(playerPrefab, spawnPosition, spawnRotation);
+            
+            if (playerInstance == null)
+            {
+                Debug.LogError("[MyNetworkManager] Failed to instantiate player prefab!");
+                spawnedPlayers.Remove(conn.ClientId);
+                return;
+            }
+            
+            // Спавним на сервере
+            _networkManager.ServerManager.Spawn(playerInstance, conn);
+            
+            Debug.Log($"[MyNetworkManager] Player spawned successfully: {playerInstance.name}, ObjectId={playerInstance.ObjectId}");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[MyNetworkManager] Exception while spawning player: {e.Message}");
+            spawnedPlayers.Remove(conn.ClientId);
+        }
     }
     
-    public override void OnClientDisconnect()
+    public void OnPlayerSpawned(NetworkObject playerObject)
     {
-        base.OnClientDisconnect();
-        Debug.Log("Client disconnected from server!");
+        if (playerObject != null)
+        {
+            MagicianClass.RegisterPlayer(playerObject.ObjectId, playerObject.transform);
+            Debug.Log($"[MyNetworkManager] Player registered in tracker: {playerObject.name}, ObjectId: {playerObject.ObjectId}");
+        }
     }
     
     public void RespawnPlayer(GameObject player)
     {
-        if (!NetworkServer.active) 
+        if (_networkManager == null || !_networkManager.IsServerStarted) 
         {
-            Debug.LogWarning("Cannot respawn player: not running as server");
+            Debug.LogWarning("[MyNetworkManager] Cannot respawn player: not running as server");
             return;
         }
         
@@ -100,43 +242,78 @@ public class MyNetworkManager : NetworkManager
         {
             healthSystem.Respawn();
         }
-        else
+    }
+    
+    private void Start()
+    {
+        // Очищаем трекер игроков при старте
+        System.Reflection.FieldInfo field = typeof(MagicianClass).GetField("playerTransforms", 
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        
+        if (field != null)
         {
-            Debug.LogWarning($"Cannot respawn player: HealthSystem not found on {player.name}");
+            Dictionary<int, Transform> playerTransforms = 
+                field.GetValue(null) as Dictionary<int, Transform>;
+            if (playerTransforms != null)
+            {
+                playerTransforms.Clear();
+                Debug.Log("[MyNetworkManager] Player tracker cleared on start!");
+            }
         }
+        
+        // Очищаем список спавненных игроков
+        spawnedPlayers.Clear();
+        
+        InitializeSpawnPoints();
     }
     
     private void InitializeSpawnPoints()
+    {
+        Debug.Log("[MyNetworkManager] Spawn points initialized");
+    }
+    
+    public Transform GetRandomSpawnPoint()
     {
         if (manualSpawnPoints.Count == 0)
         {
             FindSpawnPointsInScene();
         }
         
-        Debug.Log($"Initialized {startPositions.Count} spawn points");
+        if (manualSpawnPoints.Count == 0)
+        {
+            Debug.LogWarning("[MyNetworkManager] No spawn points available!");
+            return null;
+        }
+        
+        int randomIndex = Random.Range(0, manualSpawnPoints.Count);
+        return manualSpawnPoints[randomIndex];
     }
     
     private void FindSpawnPointsInScene()
     {
-        NetworkStartPosition[] sceneSpawnPoints = FindObjectsByType<NetworkStartPosition>(FindObjectsSortMode.None);
+        GameObject[] spawnPointObjects = GameObject.FindGameObjectsWithTag("SpawnPoint");
         
-        foreach (NetworkStartPosition spawnPoint in sceneSpawnPoints)
+        foreach (GameObject obj in spawnPointObjects)
         {
-            startPositions.Add(spawnPoint.transform);
-            manualSpawnPoints.Add(spawnPoint.transform);
+            if (obj != null && obj.transform != null)
+            {
+                manualSpawnPoints.Add(obj.transform);
+            }
         }
         
-        if (sceneSpawnPoints.Length == 0)
+        if (spawnPointObjects.Length == 0)
         {
-            Debug.LogWarning("No NetworkStartPosition objects found in scene!");
+            Debug.LogWarning("[MyNetworkManager] No spawn points found with tag 'SpawnPoint'! Creating default...");
             CreateDefaultSpawnPoints();
+        }
+        else
+        {
+            Debug.Log($"[MyNetworkManager] Found {spawnPointObjects.Length} spawn points in scene");
         }
     }
     
     private void CreateDefaultSpawnPoints()
     {
-        Debug.Log("Creating default spawn points...");
-        
         Vector3[] defaultPositions = new Vector3[]
         {
             new Vector3(-10f, 2f, -10f),
@@ -150,33 +327,23 @@ public class MyNetworkManager : NetworkManager
             GameObject spawnPointObj = new GameObject($"DefaultSpawnPoint_{i}");
             spawnPointObj.transform.position = defaultPositions[i];
             spawnPointObj.transform.rotation = Quaternion.identity;
+            spawnPointObj.tag = "SpawnPoint";
             
-            spawnPointObj.AddComponent<NetworkStartPosition>();
-            
-            startPositions.Add(spawnPointObj.transform);
             manualSpawnPoints.Add(spawnPointObj.transform);
         }
+        
+        Debug.Log($"[MyNetworkManager] Created {defaultPositions.Length} default spawn points");
     }
     
-    public Transform GetRandomSpawnPoint()
+    public void RestartGame()
     {
-        if (startPositions.Count == 0)
+        Time.timeScale = 1f;
+        if (_networkManager != null && _networkManager.IsServerStarted)
         {
-            Debug.LogWarning("No spawn points available!");
-            return null;
+            string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            SceneLoadData sld = new SceneLoadData(sceneName);
+            sld.ReplaceScenes = ReplaceOption.All;
+            _networkManager.SceneManager.LoadGlobalScenes(sld);
         }
-        
-        int randomIndex = Random.Range(0, startPositions.Count);
-        return startPositions[randomIndex];
-    }
-    
-    public Transform GetSpawnPoint(int index)
-    {
-        if (index >= 0 && index < startPositions.Count)
-        {
-            return startPositions[index];
-        }
-        
-        return GetRandomSpawnPoint();
     }
 }

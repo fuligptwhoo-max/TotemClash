@@ -1,9 +1,13 @@
 using UnityEngine;
 using TMPro;
-using Mirror;
-using System.Collections.Generic;
+using FishNet.Object;
+using FishNet.Managing;
 
-public class GameManager : NetworkBehaviour
+/// <summary>
+/// GameManager - центральный менеджер игры
+/// Работает локально, время управляется сервером через SyncVar если есть сетевой объект
+/// </summary>
+public class GameManager : MonoBehaviour
 {
     public static GameManager Instance { get; private set; }
     
@@ -19,21 +23,12 @@ public class GameManager : NetworkBehaviour
     [Header("Totem")]
     public TotemController totem;
     
-    // Синхронизированные переменные
-    [SyncVar(hook = nameof(OnTimeChanged))]
-    private float currentTime;
-    
-    [SyncVar(hook = nameof(OnScoreChanged))]
-    private int totalScore = 0;
-    
-    [SyncVar]
-    private bool gameActive = false;
-    
-    // Локальные переменные
     private bool isPaused = false;
-    
-    // Для отслеживания носителя тотема
-    private uint currentCarrierId = 0;
+    private float currentTime;
+    private int totalScore = 0;
+    private bool isGameActive = false;
+    private bool gameStarted = false;
+    private float gameStartTime = 0f;
     private float carrierScoreAccumulator = 0f;
     
     private void Awake()
@@ -41,7 +36,7 @@ public class GameManager : NetworkBehaviour
         if (Instance == null)
         {
             Instance = this;
-            // УБРАЛ DontDestroyOnLoad - не работает для вложенных объектов
+            currentTime = gameTime;
         }
         else
         {
@@ -49,116 +44,121 @@ public class GameManager : NetworkBehaviour
         }
     }
     
-    public override void OnStartServer()
-    {
-        base.OnStartServer();
-        
-        currentTime = gameTime;
-        gameActive = true;
-        
-        Debug.Log("[SERVER] GameManager started!");
-    }
-    
-    public override void OnStartClient()
-    {
-        base.OnStartClient();
-        
-        if (totem == null)
-        {
-            FindTotem();
-        }
-        
-        if (pauseMenu != null)
-            pauseMenu.SetActive(false);
-        
-        UpdateTimerUI();
-        UpdateScoreUI();
-        
-        Debug.Log("[CLIENT] GameManager initialized");
-    }
-    
     private void Start()
     {
-        // Запускаем только на сервере
-        if (isServer)
-        {
-            currentTime = gameTime;
-            gameActive = true;
-        }
-        
         if (pauseMenu != null)
             pauseMenu.SetActive(false);
+        
+        FindTotem();
+        
+        // Включаем управление у всех игроков сразу
+        EnableAllPlayerControls();
+        
+        // Запускаем игру через 2 секунды
+        gameStartTime = Time.time + 2f;
+        Debug.Log("[GameManager] Game will start in 2 seconds...");
     }
     
     private void Update()
     {
-        if (!isServer) return;
-        if (!gameActive) return;
+        HandlePauseInput();
         
-        // Обновляем время только на сервере
+        // Задержка перед стартом игры
+        if (!gameStarted && Time.time >= gameStartTime)
+        {
+            gameStarted = true;
+            isGameActive = true;
+            Debug.Log("[GameManager] Game started!");
+        }
+        
+        // Обновляем время только на сервере или в одиночной игре
+        if (gameStarted && isGameActive && !isPaused)
+        {
+            UpdateGameTime();
+            UpdateScoreFromTotem();
+        }
+        
+        UpdateTimerUI();
+        UpdateScoreUI();
+    }
+    
+    private void UpdateGameTime()
+    {
+        // Только сервер обновляет время (или локальная игра)
+        if (!IsServer()) return;
+        
         currentTime -= Time.deltaTime;
-        
-        // Обновляем очки с тотема
-        UpdateScoreFromTotem();
         
         if (currentTime <= 0f)
         {
             currentTime = 0f;
-            gameActive = false;
-            RpcEndGame();
+            isGameActive = false;
+            OnGameEnded();
         }
+    }
+    
+    private bool IsServer()
+    {
+        // Проверяем есть ли NetworkManager и запущен ли сервер
+        var nm = FindFirstObjectByType<NetworkManager>();
+        if (nm != null && nm.IsServerStarted)
+            return true;
+        
+        // Если нет сети - считаем что мы "сервер" (локальная игра)
+        if (nm == null)
+            return true;
+            
+        return false;
     }
     
     private void UpdateScoreFromTotem()
     {
-        if (totem != null && totem.IsBeingCarried())
-        {
-            uint carrierId = totem.GetCarrierId();
-            
-            if (carrierId != 0)
-            {
-                carrierScoreAccumulator += totem.GetCarryMultiplier() * Time.deltaTime;
-                
-                if (carrierScoreAccumulator >= 1f)
-                {
-                    int pointsToAdd = Mathf.FloorToInt(carrierScoreAccumulator);
-                    AddScore(pointsToAdd);
-                    carrierScoreAccumulator -= pointsToAdd;
-                }
-            }
-        }
-        else
+        if (!IsServer()) return;
+        if (totem == null || !totem.IsBeingCarried())
         {
             carrierScoreAccumulator = 0f;
+            return;
+        }
+        
+        carrierScoreAccumulator += totem.GetCarryMultiplier() * Time.deltaTime;
+        
+        if (carrierScoreAccumulator >= 1f)
+        {
+            int pointsToAdd = Mathf.FloorToInt(carrierScoreAccumulator);
+            AddScore(pointsToAdd);
+            carrierScoreAccumulator -= pointsToAdd;
         }
     }
     
-    [Server]
-    public void AddScore(int points)
+    private void HandlePauseInput()
     {
-        totalScore += points;
-        Debug.Log($"[SERVER] Score added: {points}, Total: {totalScore}");
-        
-        // Начисляем очки конкретному игроку (если нужно)
-        if (currentCarrierId != 0 && NetworkServer.spawned.TryGetValue(currentCarrierId, out NetworkIdentity player))
+        if (Input.GetKeyDown(KeyCode.Escape))
         {
-            PlayerScore playerScore = player.GetComponent<PlayerScore>();
-            if (playerScore != null)
+            TogglePause();
+        }
+    }
+    
+    private void EnableAllPlayerControls()
+    {
+        var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
+        foreach (var player in players)
+        {
+            if (player.IsOwner)
             {
-                playerScore.AddScore(points);
+                player.EnableControls(true);
             }
         }
     }
     
-    // Hooks для синхронизации
-    private void OnTimeChanged(float oldTime, float newTime)
+    /// <summary>
+    /// Добавляет очки (только сервер)
+    /// </summary>
+    public void AddScore(int points)
     {
-        UpdateTimerUI();
-    }
-    
-    private void OnScoreChanged(int oldScore, int newScore)
-    {
-        UpdateScoreUI();
+        if (!IsServer()) return;
+        
+        totalScore += points;
+        Debug.Log($"[SERVER] Score added: {points}, Total: {totalScore}");
     }
     
     private void UpdateTimerUI()
@@ -179,18 +179,7 @@ public class GameManager : NetworkBehaviour
         }
     }
     
-    private void FindTotem()
-    {
-        var totemObject = FindFirstObjectByType<TotemController>();
-        if (totemObject != null)
-        {
-            totem = totemObject;
-            Debug.Log($"Found totem: {totem.name}");
-        }
-    }
-    
-    [ClientRpc]
-    private void RpcEndGame()
+    private void OnGameEnded()
     {
         if (gameOverPanel != null)
         {
@@ -206,10 +195,17 @@ public class GameManager : NetworkBehaviour
         Cursor.lockState = CursorLockMode.None;
     }
     
+    private void FindTotem()
+    {
+        var totemObject = FindFirstObjectByType<TotemController>();
+        if (totemObject != null)
+        {
+            totem = totemObject;
+        }
+    }
+    
     public void TogglePause()
     {
-        if (!isLocalPlayer) return;
-        
         isPaused = !isPaused;
         
         if (pauseMenu != null)
@@ -218,7 +214,6 @@ public class GameManager : NetworkBehaviour
         }
         
         Time.timeScale = isPaused ? 0f : 1f;
-        
         Cursor.visible = isPaused;
         Cursor.lockState = isPaused ? CursorLockMode.None : CursorLockMode.Confined;
     }
@@ -226,7 +221,11 @@ public class GameManager : NetworkBehaviour
     public void RestartGame()
     {
         Time.timeScale = 1f;
-        NetworkManager.singleton.ServerChangeScene(NetworkManager.singleton.onlineScene);
+        
+        if (MyNetworkManager.Instance != null)
+        {
+            MyNetworkManager.Instance.RestartGame();
+        }
     }
     
     public void QuitGame()

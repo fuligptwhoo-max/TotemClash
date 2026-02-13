@@ -25,7 +25,7 @@ public class AIBotController : MonoBehaviour
     
     private void Update()
     {
-        if (healthSystem != null && healthSystem.currentHealth <= 0) return;
+        if (healthSystem != null && healthSystem.currentHealth.Value <= 0) return;
         
         if (targetPlayer == null)
         {
@@ -81,6 +81,10 @@ public class AIBotController : MonoBehaviour
         foreach (var player in players)
         {
             if (player == null || player.gameObject == gameObject) continue;
+            
+            // Проверяем что игрок "живой" (не мертв)
+            HealthSystem playerHealth = player.GetComponent<HealthSystem>();
+            if (playerHealth != null && playerHealth.currentHealth.Value <= 0) continue;
             
             float distance = Vector3.Distance(transform.position, player.transform.position);
             if (distance < closestDistance)

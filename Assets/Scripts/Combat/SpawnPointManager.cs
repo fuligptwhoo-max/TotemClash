@@ -1,5 +1,4 @@
 using UnityEngine;
-using Mirror;
 
 public class SpawnPointManager : MonoBehaviour
 {
@@ -29,5 +28,24 @@ public class SpawnPointManager : MonoBehaviour
         }
         
         return spawnPoints[Random.Range(0, spawnPoints.Length)];
+    }
+    
+    /// <summary>
+    /// Возвращает спавн-поинт по индексу
+    /// </summary>
+    public Transform GetSpawnPoint(int index)
+    {
+        if (spawnPoints.Length == 0)
+        {
+            Debug.LogError("No spawn points assigned!");
+            return transform;
+        }
+        
+        if (index >= 0 && index < spawnPoints.Length)
+        {
+            return spawnPoints[index];
+        }
+        
+        return GetRandomSpawnPoint();
     }
 }

@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections;
-using Mirror;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using System.Collections.Generic;
 
 public class MagicianClass : NetworkBehaviour
@@ -11,19 +12,19 @@ public class MagicianClass : NetworkBehaviour
     public float fireballCooldown = 1f;
     public float fireballSpeed = 40f;
     
-    [Header("Вращение фаербола")]
+    [Header("Fireball Rotation")]
     public float fireballRotationSpeed = 360f;
     public Vector3 fireballRotationAxis = Vector3.up;
     
     [Header("Animation Settings")]
     public float attackAnimationDelay = 0.3f;
     
-    [Header("Наведение")]
+    [Header("Targeting")]
     public float autoAimRange = 15f;
     public bool enableAutoAim = true;
     public float autoAimAngle = 45f;
     public LayerMask obstacleLayers;
-    public float heightTolerance = 2f; // Допустимая разница высот
+    public float heightTolerance = 2f;
     
     private float lastFireballTime;
     private bool isAttacking = false;
@@ -31,7 +32,8 @@ public class MagicianClass : NetworkBehaviour
     private Animator animator;
     private AimingSystem aimingSystem;
     
-    private static Dictionary<uint, Transform> playerTransforms = new Dictionary<uint, Transform>();
+    // Статический словарь для трекинга игроков
+    private static Dictionary<int, Transform> playerTransforms = new Dictionary<int, Transform>();
     
     public void Initialize(NetworkPlayerController controller, PlayerCombat combat, Animator anim)
     {
@@ -44,12 +46,12 @@ public class MagicianClass : NetworkBehaviour
             FindCastPoint();
         }
         
-        if (isServer && netIdentity != null)
+        if (base.IsServerInitialized && base.NetworkObject != null)
         {
-            RegisterPlayer(netIdentity.netId, transform);
+            RegisterPlayer(base.NetworkObject.ObjectId, transform);
         }
         
-        Debug.Log($"MagicianClass initialized for {gameObject.name}, netId: {netIdentity?.netId}");
+        Debug.Log($"MagicianClass initialized for {gameObject.name}, ObjectId: {base.NetworkObject?.ObjectId}");
     }
     
     void FindCastPoint()
@@ -74,9 +76,9 @@ public class MagicianClass : NetworkBehaviour
         if (Time.time - lastFireballTime < fireballCooldown || isAttacking)
             return false;
         
-        if (playerController != null && playerController.isLocalPlayer)
+        if (playerController != null && base.IsOwner)
         {
-            uint targetPlayerId = 0;
+            int targetPlayerId = -1;
             bool useDirectTarget = true;
             Vector3 finalTargetPosition = targetPosition;
             
@@ -86,30 +88,28 @@ public class MagicianClass : NetworkBehaviour
                 GameObject aimedPlayer = aimingSystem.GetAimedPlayer();
                 if (aimedPlayer != null)
                 {
-                    NetworkIdentity identity = aimedPlayer.GetComponent<NetworkIdentity>();
-                    if (identity != null && identity.netId != netIdentity.netId)
+                    NetworkObject netObj = aimedPlayer.GetComponent<NetworkObject>();
+                    if (netObj != null && netObj.ObjectId != base.NetworkObject.ObjectId)
                     {
-                        targetPlayerId = identity.netId;
-                        // Берем позицию игрока на его высоте
+                        targetPlayerId = netObj.ObjectId;
                         finalTargetPosition = aimedPlayer.transform.position + Vector3.up * 1f;
                         useDirectTarget = true;
-                        Debug.Log($"Выстрел по цели в прицеле: {aimedPlayer.name}, высота: {finalTargetPosition.y}");
+                        Debug.Log($"Shot at targeted player: {aimedPlayer.name}, height: {finalTargetPosition.y}");
                     }
                 }
             }
             
             // ПРИОРИТЕТ 2: Автонаведение
-            if (targetPlayerId == 0 && enableAutoAim && !IsAimingAtGround(targetPosition))
+            if (targetPlayerId == -1 && enableAutoAim && !IsAimingAtGround(targetPosition))
             {
                 targetPlayerId = FindAutoAimTarget();
-                if (targetPlayerId != 0)
+                if (targetPlayerId != -1)
                 {
                     if (playerTransforms.TryGetValue(targetPlayerId, out Transform targetTransform))
                     {
-                        // Берем позицию цели на её высоте
                         finalTargetPosition = targetTransform.position + Vector3.up * 1f;
                         useDirectTarget = false;
-                        Debug.Log($"Автонаведение на игрока ID: {targetPlayerId}, высота: {finalTargetPosition.y}");
+                        Debug.Log($"Auto-aim at player ID: {targetPlayerId}, height: {finalTargetPosition.y}");
                     }
                 }
             }
@@ -121,7 +121,7 @@ public class MagicianClass : NetworkBehaviour
         return false;
     }
     
-    IEnumerator PerformFireballAttack(Vector3 targetPosition, uint targetPlayerId, bool useDirectTarget)
+    IEnumerator PerformFireballAttack(Vector3 targetPosition, int targetPlayerId, bool useDirectTarget)
     {
         isAttacking = true;
         lastFireballTime = Time.time;
@@ -134,7 +134,7 @@ public class MagicianClass : NetworkBehaviour
         
         yield return new WaitForSeconds(attackAnimationDelay);
         
-        if (isServer)
+        if (base.IsServerInitialized)
         {
             SpawnFireballServer(targetPosition, targetPlayerId, useDirectTarget);
         }
@@ -151,40 +151,35 @@ public class MagicianClass : NetworkBehaviour
         isAttacking = false;
     }
     
-    [Command]
-    private void CmdSpawnFireball(Vector3 targetPosition, uint targetPlayerId, bool useDirectTarget)
+    [ServerRpc]
+    private void CmdSpawnFireball(Vector3 targetPosition, int targetPlayerId, bool useDirectTarget)
     {
         SpawnFireballServer(targetPosition, targetPlayerId, useDirectTarget);
     }
     
     [Server]
-    private void SpawnFireballServer(Vector3 targetPosition, uint targetPlayerId, bool useDirectTarget)
+    private void SpawnFireballServer(Vector3 targetPosition, int targetPlayerId, bool useDirectTarget)
     {
         Vector3 spawnPosition = castPoint != null ? 
             castPoint.position : transform.position + Vector3.up * 1.5f;
         
         Vector3 direction = (targetPosition - spawnPosition).normalized;
         
-        // ИСПРАВЛЕНИЕ: НЕ обнуляем Y для автонаведения!
-        // Если это автонаведение - проверяем высоту
+        // НЕ обнуляем Y для автонаведения
         if (!useDirectTarget)
         {
-            // Проверяем разницу высот
             float heightDifference = Mathf.Abs(targetPosition.y - spawnPosition.y);
             if (heightDifference > heightTolerance)
             {
-                // Если цель слишком высоко/низко, стреляем с учетом высоты
                 direction = (targetPosition - spawnPosition).normalized;
             }
             else
             {
-                // Если разница высот небольшая, можно немного сгладить траекторию
-                direction.y *= 0.5f; // Уменьшаем вертикальную компоненту, но не обнуляем
+                direction.y *= 0.5f;
                 direction.Normalize();
             }
         }
         
-        // Если направление нулевое - стреляем вперед
         if (direction == Vector3.zero)
         {
             direction = transform.forward;
@@ -195,17 +190,17 @@ public class MagicianClass : NetworkBehaviour
         Quaternion compensation = Quaternion.Euler(270, 0, 0);
         Quaternion finalRotation = Quaternion.LookRotation(direction) * compensation;
         
-        Debug.Log($"=== СОЗДАНИЕ ФАЕРБОЛА ===");
-        Debug.Log($"Тип: {(useDirectTarget ? "Прямой" : "Автонаведение")}");
-        Debug.Log($"Направление: {direction}");
-        Debug.Log($"Высота цели: {targetPosition.y}, высота спавна: {spawnPosition.y}");
+        Debug.Log($"=== SPAWNING FIREBALL ===");
+        Debug.Log($"Type: {(useDirectTarget ? "Direct" : "Auto-aim")}");
+        Debug.Log($"Direction: {direction}");
+        Debug.Log($"Target height: {targetPosition.y}, Spawn height: {spawnPosition.y}");
         
         GameObject fireball = Instantiate(fireballPrefab, spawnPosition, finalRotation);
         
         FireballProjectile projectile = fireball.GetComponent<FireballProjectile>();
         if (projectile != null)
         {
-            projectile.owner = gameObject;
+            projectile.owner.Value = gameObject;
             projectile.speed = fireballSpeed;
             projectile.rotationSpeed = fireballRotationSpeed;
             projectile.rotationAxis = fireballRotationAxis;
@@ -217,11 +212,11 @@ public class MagicianClass : NetworkBehaviour
         Rigidbody rb = fireball.GetComponent<Rigidbody>();
         if (rb != null)
         {
-            // Используем transform.forward фаербола
             rb.linearVelocity = fireball.transform.forward * fireballSpeed;
         }
         
-        NetworkServer.Spawn(fireball);
+        // Спавним на сервере - FishNet автоматически синхронизирует с клиентами
+        base.ServerManager.Spawn(fireball);
     }
     
     private bool IsAimingAtGround(Vector3 targetPosition)
@@ -230,13 +225,12 @@ public class MagicianClass : NetworkBehaviour
         
         if (aimingSystem.IsAimingAtPlayer()) return false;
         
-        // Проверяем высоту цели
         return Mathf.Abs(targetPosition.y) < 0.5f;
     }
     
-    private uint FindAutoAimTarget()
+    private int FindAutoAimTarget()
     {
-        uint bestTargetId = 0;
+        int bestTargetId = -1;
         float bestScore = 0f;
         
         Vector3 playerForward = transform.forward;
@@ -244,14 +238,13 @@ public class MagicianClass : NetworkBehaviour
         
         foreach (var kvp in playerTransforms)
         {
-            if (kvp.Key == netIdentity.netId) continue;
+            if (kvp.Key == base.NetworkObject.ObjectId) continue;
             
             Vector3 toTarget = (kvp.Value.position - playerPosition);
             float distance = toTarget.magnitude;
             
             if (distance > autoAimRange) continue;
             
-            // Проверяем разницу высот
             float heightDifference = Mathf.Abs(kvp.Value.position.y - playerPosition.y);
             if (heightDifference > heightTolerance) continue;
             
@@ -285,38 +278,40 @@ public class MagicianClass : NetworkBehaviour
         return bestTargetId;
     }
     
-    public static void RegisterPlayer(uint playerId, Transform playerTransform)
+    public static void RegisterPlayer(int playerId, Transform playerTransform)
     {
         if (!playerTransforms.ContainsKey(playerId))
         {
             playerTransforms[playerId] = playerTransform;
-            Debug.Log($"Игрок зарегистрирован в трекере: ID {playerId}");
+            Debug.Log($"Player registered in tracker: ID {playerId}");
         }
     }
     
-    public static void UnregisterPlayer(uint playerId)
+    public static void UnregisterPlayer(int playerId)
     {
         if (playerTransforms.ContainsKey(playerId))
         {
             playerTransforms.Remove(playerId);
-            Debug.Log($"Игрок удален из трекера: ID {playerId}");
+            Debug.Log($"Player removed from tracker: ID {playerId}");
         }
     }
     
-    public static Transform GetPlayerTransform(uint playerId)
+    public static Transform GetPlayerTransform(int playerId)
     {
         playerTransforms.TryGetValue(playerId, out Transform transform);
         return transform;
     }
     
-    private void OnDestroy()
+    public override void OnStopNetwork()
     {
-        if (netIdentity != null)
+        base.OnStopNetwork();
+        if (base.NetworkObject != null)
         {
-            UnregisterPlayer(netIdentity.netId);
+            UnregisterPlayer(base.NetworkObject.ObjectId);
         }
     }
     
+    // Заглушки для будущих способностей
     public bool Ability1(Vector3 targetPosition) { return false; }
     public bool Ability2(Vector3 targetPosition) { return false; }
     public bool UltimateAbility(Vector3 targetPosition) { return false; }

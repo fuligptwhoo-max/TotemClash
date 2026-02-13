@@ -160,7 +160,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1024055869227127663}
   - component: {fileID: 7476782589122759425}
-  - component: {fileID: -4970402830691396517}
   - component: {fileID: 2971365498699623460}
   m_Layer: 5
   m_Name: TotemPickUpCanvas
@@ -242,23 +241,6 @@ MonoBehaviour:
   m_OnValueChanged:
     m_PersistentCalls:
       m_Calls: []
---- !u!114 &-4970402830691396517
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3526179753256808368}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 27b9d5358201f1248b67d33a9e223fdf, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TotemPickupUI
-  pickupSlider: {fileID: 7476782589122759425}
-  pickupText: {fileID: 0}
-  canvasGroup: {fileID: 2971365498699623460}
-  fadeSpeed: 5
-  showDuration: 2
 --- !u!225 &2971365498699623460
 CanvasGroup:
   m_ObjectHideFlags: 0

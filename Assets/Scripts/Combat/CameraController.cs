@@ -1,49 +1,59 @@
 using UnityEngine;
-using Mirror;
 
+/// <summary>
+/// Простой контроллер камеры - следует за целью с указанным смещением
+/// </summary>
 public class CameraController : MonoBehaviour
 {
     [Header("Camera Settings")]
+    [Tooltip("Смещение камеры относительно цели")]
     public Vector3 offset = new Vector3(0f, 25f, -10f);
-    public float smoothSpeed = 1000f;
+    
+    [Tooltip("Скорость сглаживания движения")]
+    public float smoothSpeed = 5f;
+    
+    [Tooltip("Угол наклона камеры")]
     public float pitchAngle = 53f;
+    
+    [Tooltip("Следовать за целью")]
+    public bool followTarget = true;
 
     private Transform target;
-    private Camera cam;
-    private Quaternion fixedRotation;
     private Vector3 velocity = Vector3.zero;
-
-    private void Start()
-    {
-        cam = GetComponent<Camera>();
-        if (cam != null)
-        {
-            cam.fieldOfView = 90f;
-        }
-        fixedRotation = Quaternion.Euler(pitchAngle, 0f, 0f);
-        transform.rotation = fixedRotation;
-    }
-
-    private void Update()
-    {
-        // Если target не установлен, пытаемся найти локального игрока
-        if (target == null && NetworkClient.localPlayer != null)
-        {
-            target = NetworkClient.localPlayer.transform;
-            if (target != null)
-            {
-                transform.position = target.position + offset;
-                Debug.Log("Camera attached to local player: " + target.name);
-            }
-        }
-    }
 
     private void LateUpdate()
     {
+        if (!followTarget) return;
         if (target == null) return;
 
+        // Позиция куда должна быть камера
         Vector3 desiredPosition = target.position + offset;
+        
+        // Плавное движение
         transform.position = Vector3.SmoothDamp(transform.position, desiredPosition, ref velocity, 1f / smoothSpeed);
-        transform.rotation = fixedRotation;
+        
+        // Фиксированный поворот
+        transform.rotation = Quaternion.Euler(pitchAngle, 0f, 0f);
+    }
+    
+    /// <summary>
+    /// Устанавливает цель для следования
+    /// </summary>
+    public void SetTarget(Transform newTarget)
+    {
+        if (newTarget == null) return;
+        
+        target = newTarget;
+        
+        // Сразу перемещаем камеру на позицию без сглаживания
+        transform.position = target.position + offset;
+        transform.rotation = Quaternion.Euler(pitchAngle, 0f, 0f);
+        
+        Debug.Log($"[CameraController] Target set: {target.name}");
+    }
+    
+    public Transform GetTarget()
+    {
+        return target;
     }
 }

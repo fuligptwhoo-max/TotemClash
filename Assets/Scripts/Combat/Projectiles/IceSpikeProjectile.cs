@@ -1,19 +1,32 @@
 using UnityEngine;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
 
-public class IceSpikeProjectile : MonoBehaviour
+public class IceSpikeProjectile : NetworkBehaviour
 {
+    [Header("Settings")]
     public float damage = 25f;
     public float slowAmount = 0.5f;
     public float slowDuration = 3f;
-    public GameObject owner;
+    
+    // FishNet 4.x SyncVar
+    public readonly SyncVar<GameObject> owner = new SyncVar<GameObject>();
+    
     public float ignoreCollisionTime = 0.2f;
     
     private float spawnTime;
     private bool collisionsIgnored = false;
     
-    private void Start()
+    public override void OnStartNetwork()
     {
+        base.OnStartNetwork();
         spawnTime = Time.time;
+        
+        // Игнорируем столкновения с владельцем
+        if (owner.Value != null)
+        {
+            IgnoreCollisionWithOwner();
+        }
     }
     
     private void Update()
@@ -26,16 +39,19 @@ public class IceSpikeProjectile : MonoBehaviour
     
     public void IgnoreCollisionWithOwner()
     {
-        if (owner != null)
+        if (owner.Value != null)
         {
-            Collider[] ownerColliders = owner.GetComponentsInChildren<Collider>();
+            Collider[] ownerColliders = owner.Value.GetComponentsInChildren<Collider>();
             Collider[] projectileColliders = GetComponentsInChildren<Collider>();
             
             foreach (var projCollider in projectileColliders)
             {
                 foreach (var ownerCollider in ownerColliders)
                 {
-                    Physics.IgnoreCollision(projCollider, ownerCollider, true);
+                    if (ownerCollider != null && projCollider != null)
+                    {
+                        Physics.IgnoreCollision(projCollider, ownerCollider, true);
+                    }
                 }
             }
             
@@ -45,16 +61,19 @@ public class IceSpikeProjectile : MonoBehaviour
     
     private void EnableCollisions()
     {
-        if (owner != null && collisionsIgnored)
+        if (owner.Value != null && collisionsIgnored)
         {
-            Collider[] ownerColliders = owner.GetComponentsInChildren<Collider>();
+            Collider[] ownerColliders = owner.Value.GetComponentsInChildren<Collider>();
             Collider[] projectileColliders = GetComponentsInChildren<Collider>();
             
             foreach (var projCollider in projectileColliders)
             {
                 foreach (var ownerCollider in ownerColliders)
                 {
-                    Physics.IgnoreCollision(projCollider, ownerCollider, false);
+                    if (ownerCollider != null && projCollider != null)
+                    {
+                        Physics.IgnoreCollision(projCollider, ownerCollider, false);
+                    }
                 }
             }
             
@@ -64,17 +83,20 @@ public class IceSpikeProjectile : MonoBehaviour
     
     private void OnCollisionEnter(Collision collision)
     {
-        if (collision.gameObject != owner && collision.gameObject.CompareTag("Player"))
+        if (!base.IsServerInitialized) return;
+        
+        if (collision.gameObject != owner.Value && collision.gameObject.CompareTag("Player"))
         {
-            Debug.Log($"{owner.name} нанес {damage} урона ледяным шипом {collision.gameObject.name}");
+            Debug.Log($"{owner.Value?.name} dealt {damage} ice damage to {collision.gameObject.name}");
             
             HealthSystem health = collision.gameObject.GetComponent<HealthSystem>();
             if (health != null)
             {
-                health.TakeDamage(damage, owner);
+                health.TakeDamage(damage, owner.Value);
             }
         }
         
-        Destroy(gameObject);
+        // Уничтожаем на сервере
+        base.ServerManager.Despawn(gameObject);
     }
 }

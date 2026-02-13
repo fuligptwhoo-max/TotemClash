@@ -1,5 +1,4 @@
 using UnityEngine;
-using Mirror;
 
 public class AttackRangeDetector : MonoBehaviour
 {
@@ -10,7 +9,7 @@ public class AttackRangeDetector : MonoBehaviour
         if (playerController != null && other.CompareTag("Player"))
         {
             // Игрок вошел в зону атаки
-            Debug.Log($"Игрок {other.name} в зоне атаки");
+            Debug.Log($"Player {other.name} entered attack range");
         }
     }
     
@@ -19,7 +18,7 @@ public class AttackRangeDetector : MonoBehaviour
         if (playerController != null && other.CompareTag("Player"))
         {
             // Игрок вышел из зоны атаки
-            Debug.Log($"Игрок {other.name} вышел из зоны атаки");
+            Debug.Log($"Player {other.name} left attack range");
         }
     }
 }

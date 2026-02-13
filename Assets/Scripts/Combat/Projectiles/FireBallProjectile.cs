@@ -1,31 +1,32 @@
 using UnityEngine;
-using Mirror;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using System.Collections;
 
 public class FireballProjectile : NetworkBehaviour
 {
-    [Header("Настройки")]
+    [Header("Settings")]
     public float speed = 40f;
     public float damage = 50f;
     public float lifeTime = 3f;
     
-    [Header("Вращение")]
+    [Header("Rotation")]
     public float rotationSpeed = 360f;
     public Vector3 rotationAxis = Vector3.up;
     
-    [Header("Триггер для игроков")]
+    [Header("Player Trigger")]
     public float triggerRadius = 1.5f;
     
-    [Header("Игнорирование владельца")]
-    public float ignoreOwnerTime = 0.3f; // Время, в течение которого игнорируем столкновения с владельцем
+    [Header("Ignore Owner")]
+    public float ignoreOwnerTime = 0.3f;
     
-    [Header("Цель")]
-    public uint targetPlayerId;
+    [Header("Target")]
+    public int targetPlayerId = -1;
     public bool useDirectTarget = true;
     public Vector3 initialTargetPosition;
     
-    [SyncVar]
-    public GameObject owner;
+    // FishNet 4.x SyncVar
+    public readonly SyncVar<GameObject> owner = new SyncVar<GameObject>();
     
     private Rigidbody rb;
     private SphereCollider triggerCollider;
@@ -36,8 +37,10 @@ public class FireballProjectile : NetworkBehaviour
     private float lastCheckTime = 0f;
     private bool collisionsIgnored = false;
     
-    private void Start()
+    public override void OnStartNetwork()
     {
+        base.OnStartNetwork();
+        
         rb = GetComponent<Rigidbody>();
         
         // Создаем триггер для игроков
@@ -51,7 +54,7 @@ public class FireballProjectile : NetworkBehaviour
         physicsCollider.radius = 0.5f;
         
         // Игнорируем столкновения с владельцем временно
-        if (owner != null)
+        if (owner.Value != null)
         {
             IgnoreOwnerCollisions(true);
             StartCoroutine(EnableOwnerCollisionsAfterDelay());
@@ -65,7 +68,7 @@ public class FireballProjectile : NetworkBehaviour
             rb.linearVelocity = direction * speed;
         }
         
-        if (isServer)
+        if (base.IsServerInitialized)
         {
             Invoke(nameof(DestroyFireball), lifeTime);
         }
@@ -73,9 +76,9 @@ public class FireballProjectile : NetworkBehaviour
     
     private void IgnoreOwnerCollisions(bool ignore)
     {
-        if (owner == null) return;
+        if (owner.Value == null) return;
         
-        Collider[] ownerColliders = owner.GetComponentsInChildren<Collider>();
+        Collider[] ownerColliders = owner.Value.GetComponentsInChildren<Collider>();
         Collider[] projectileColliders = GetComponentsInChildren<Collider>();
         
         foreach (var ownerCollider in ownerColliders)
@@ -97,7 +100,7 @@ public class FireballProjectile : NetworkBehaviour
     {
         yield return new WaitForSeconds(ignoreOwnerTime);
         
-        if (owner != null)
+        if (owner.Value != null)
         {
             IgnoreOwnerCollisions(false);
         }
@@ -106,7 +109,7 @@ public class FireballProjectile : NetworkBehaviour
     private void FixedUpdate()
     {
         // Коррекция траектории для автонаведения
-        if (!useDirectTarget && targetPlayerId != 0 && rb != null)
+        if (!useDirectTarget && targetPlayerId != -1 && rb != null)
         {
             Transform targetTransform = MagicianClass.GetPlayerTransform(targetPlayerId);
             if (targetTransform != null)
@@ -137,8 +140,8 @@ public class FireballProjectile : NetworkBehaviour
     {
         transform.Rotate(rotationAxis * rotationSpeed * Time.deltaTime, Space.Self);
         
-        // Проверка столкновений с игроками
-        if (Time.time - lastCheckTime > checkInterval)
+        // Проверка столкновений с игроками (только на сервере)
+        if (base.IsServerInitialized && Time.time - lastCheckTime > checkInterval)
         {
             CheckForPlayerCollisions();
             lastCheckTime = Time.time;
@@ -147,20 +150,20 @@ public class FireballProjectile : NetworkBehaviour
     
     private void CheckForPlayerCollisions()
     {
-        if (!isServer || hasExploded) return;
+        if (hasExploded) return;
         
         Collider[] hitColliders = Physics.OverlapSphere(transform.position, triggerRadius);
         foreach (var collider in hitColliders)
         {
-            if (collider.gameObject == owner && collisionsIgnored) continue;
+            if (collider.gameObject == owner.Value && collisionsIgnored) continue;
             
-            if (collider.gameObject != owner && collider.CompareTag("Player"))
+            if (collider.gameObject != owner.Value && collider.CompareTag("Player"))
             {
                 HealthSystem health = collider.GetComponent<HealthSystem>();
                 if (health != null)
                 {
-                    health.TakeDamage(damage, owner);
-                    Debug.Log($"Фаербол попал в {collider.gameObject.name} (OverlapSphere)");
+                    health.TakeDamage(damage, owner.Value);
+                    Debug.Log($"Fireball hit {collider.gameObject.name} (OverlapSphere)");
                     Explode();
                     return;
                 }
@@ -171,43 +174,42 @@ public class FireballProjectile : NetworkBehaviour
     // Триггер для Character Controller
     private void OnTriggerEnter(Collider other)
     {
-        if (!isServer || hasExploded) return;
+        if (!base.IsServerInitialized || hasExploded) return;
         
-        if (other.gameObject == owner && collisionsIgnored) return;
+        if (other.gameObject == owner.Value && collisionsIgnored) return;
         
-        if (other.gameObject != owner && other.CompareTag("Player"))
+        if (other.gameObject != owner.Value && other.CompareTag("Player"))
         {
             HealthSystem health = other.GetComponent<HealthSystem>();
             if (health != null)
             {
-                health.TakeDamage(damage, owner);
-                Debug.Log($"Фаербол попал в {other.gameObject.name} (Trigger)");
+                health.TakeDamage(damage, owner.Value);
+                Debug.Log($"Fireball hit {other.gameObject.name} (Trigger)");
             }
             Explode();
         }
     }
     
-    [ServerCallback]
     private void OnCollisionEnter(Collision collision)
     {
-        if (hasExploded) return;
+        if (!base.IsServerInitialized || hasExploded) return;
         
         GameObject hitObject = collision.gameObject;
         
         // Если попали в стену или окружение
-        if (hitObject != owner && !hitObject.CompareTag("Player") && !hitObject.CompareTag("Projectile"))
+        if (hitObject != owner.Value && !hitObject.CompareTag("Player") && !hitObject.CompareTag("Projectile"))
         {
-            Debug.Log($"Фаербол столкнулся с {hitObject.name}");
+            Debug.Log($"Fireball collided with {hitObject.name}");
             Explode();
         }
-        else if (hitObject == owner && !collisionsIgnored)
+        else if (hitObject == owner.Value && !collisionsIgnored)
         {
             // Если время игнорирования прошло и фаербол вернулся к владельцу
             HealthSystem health = hitObject.GetComponent<HealthSystem>();
             if (health != null)
             {
-                health.TakeDamage(damage, owner);
-                Debug.Log($"Фаербол вернулся и попал в владельца {hitObject.name}");
+                health.TakeDamage(damage, owner.Value);
+                Debug.Log($"Fireball returned and hit owner {hitObject.name}");
             }
             Explode();
         }
@@ -219,14 +221,14 @@ public class FireballProjectile : NetworkBehaviour
         
         hasExploded = true;
         
-        if (isServer)
+        if (base.IsServerInitialized)
             DestroyFireball();
     }
     
     [Server]
     private void DestroyFireball()
     {
-        NetworkServer.Destroy(gameObject);
+        base.ServerManager.Despawn(gameObject);
     }
     
     private void OnDrawGizmos()
@@ -234,10 +236,10 @@ public class FireballProjectile : NetworkBehaviour
         Gizmos.color = Color.yellow;
         Gizmos.DrawWireSphere(transform.position, triggerRadius);
         
-        if (owner != null && collisionsIgnored)
+        if (owner.Value != null && collisionsIgnored)
         {
             Gizmos.color = Color.red;
-            Gizmos.DrawLine(transform.position, owner.transform.position);
+            Gizmos.DrawLine(transform.position, owner.Value.transform.position);
         }
     }
 }

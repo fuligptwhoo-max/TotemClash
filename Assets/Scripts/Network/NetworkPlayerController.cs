@@ -1,9 +1,8 @@
 using UnityEngine;
-using Mirror;
+using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using UnityEngine.UI;
-using System.Collections;
 
-[RequireComponent(typeof(NetworkAnimator))]
 [RequireComponent(typeof(PlayerCombat))]
 [RequireComponent(typeof(PlayerTotemInteraction))]
 public class NetworkPlayerController : NetworkBehaviour
@@ -27,7 +26,6 @@ public class NetworkPlayerController : NetworkBehaviour
     public AimingSystem aimingSystem;
     public PlayerCombat playerCombat;
     public HealthSystem healthSystem;
-    public Camera playerCamera;
     
     [Header("Input Settings")]
     public KeyCode attackKey = KeyCode.Mouse0;
@@ -38,30 +36,24 @@ public class NetworkPlayerController : NetworkBehaviour
     public KeyCode dropKey = KeyCode.G;
     
     private PlayerTotemInteraction totemInteraction;
-    private NetworkAnimator networkAnimator;
-    
     private Vector2 inputVector = Vector2.zero;
     private Vector3 moveDirection = Vector3.zero;
-    
     private bool isMovementEnabled = true;
     private bool isAttackEnabled = true;
     private bool controlsEnabled = true;
-    
     private float lastAttackTime = 0f;
-    
+    private float spawnTime = 0f;
     private TotemPickupUI totemPickupUI;
     private GameObject totemPickupUIInstance;
     
-    private bool isBeingDestroyed = false;
-    private bool isApplicationQuitting = false;
-    
-    private float originalMoveSpeed;
-    private float originalRotationSpeed;
+    // FishNet 4.x SyncVar
+    public readonly SyncVar<bool> IsCarryingTotemSync = new SyncVar<bool>();
     
     private void Awake()
     {
+        Debug.Log($"[NetworkPlayerController] Awake on {gameObject.name}");
+        
         totemInteraction = GetComponent<PlayerTotemInteraction>();
-        networkAnimator = GetComponent<NetworkAnimator>();
         
         if (characterController == null)
             characterController = GetComponent<CharacterController>();
@@ -77,54 +69,110 @@ public class NetworkPlayerController : NetworkBehaviour
         
         if (aimingSystem == null)
             aimingSystem = GetComponent<AimingSystem>();
-        
-        originalMoveSpeed = moveSpeed;
-        originalRotationSpeed = rotationSpeed;
-        
-        Application.quitting += () => isApplicationQuitting = true;
     }
     
-    public override void OnStartLocalPlayer()
+    public override void OnStartClient()
     {
-        if (aimingSystem != null)
-            aimingSystem.enabled = true;
+        base.OnStartClient();
+        
+        spawnTime = Time.time;
+        
+        Debug.Log($"[NetworkPlayerController] OnStartClient - IsOwner: {IsOwner}, ObjectId: {ObjectId}");
+        
+        IsCarryingTotemSync.OnChange += OnCarryingChanged;
+        
+        if (base.IsOwner)
+        {
+            InitializeTotemPickupUI();
             
-        SetupCamera();
+            if (aimingSystem != null)
+                aimingSystem.enabled = true;
+            
+            Cursor.visible = false;
+            Cursor.lockState = CursorLockMode.Confined;
+            
+            // Настраиваем камеру
+            SetupCamera();
+            
+            Debug.Log($"[NetworkPlayerController] Local player initialized: {gameObject.name}");
+        }
+    }
+    
+    public override void OnStopClient()
+    {
+        base.OnStopClient();
         
-        Cursor.visible = false;
-        Cursor.lockState = CursorLockMode.Confined;
+        Debug.Log($"[NetworkPlayerController] OnStopClient - {gameObject.name}");
         
-        InitializeTotemPickupUI();
+        IsCarryingTotemSync.OnChange -= OnCarryingChanged;
         
-        Debug.Log($"Локальный игрок инициализирован: {gameObject.name}");
+        if (base.IsOwner)
+        {
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+            
+            if (totemPickupUIInstance != null)
+            {
+                Destroy(totemPickupUIInstance);
+            }
+        }
+    }
+    
+    public override void OnStartServer()
+    {
+        base.OnStartServer();
+        Debug.Log($"[NetworkPlayerController] OnStartServer - {gameObject.name}");
+        
+        if (MyNetworkManager.Instance != null)
+        {
+            MyNetworkManager.Instance.OnPlayerSpawned(base.NetworkObject);
+        }
     }
     
     private void Start()
     {
-        EnableControls(true);
+        Debug.Log($"[NetworkPlayerController] Start - {gameObject.name}");
         
-        if (playerCamera == null)
-        {
-            playerCamera = Camera.main;
-        }
+        // Управление включено сразу
+        EnableControls(true);
     }
     
     private void SetupCamera()
     {
+        Debug.Log("[NetworkPlayerController] SetupCamera called");
+        
+        // Ищем CameraController на сцене
         CameraController cameraController = FindFirstObjectByType<CameraController>();
+        
         if (cameraController != null)
         {
-            cameraController.enabled = true;
+            cameraController.SetTarget(transform);
+            Debug.Log("[NetworkPlayerController] Camera set to follow player");
         }
+        else
+        {
+            Debug.LogWarning("[NetworkPlayerController] CameraController not found on scene! Creating fallback camera...");
+            
+            // Создаём камеру если нет
+            CreateFallbackCamera();
+        }
+    }
+    
+    private void CreateFallbackCamera()
+    {
+        GameObject camObj = new GameObject("FallbackCamera");
+        Camera cam = camObj.AddComponent<Camera>();
+        cam.fieldOfView = 90f;
+        
+        CameraController cc = camObj.AddComponent<CameraController>();
+        cc.SetTarget(transform);
+        
+        Debug.Log("[NetworkPlayerController] Fallback camera created");
     }
     
     private void InitializeTotemPickupUI()
     {
-        if (totemPickupUIPrefab == null)
-        {
-            Debug.LogWarning("Префаб TotemPickupUI не назначен!");
-            return;
-        }
+        if (totemPickupUIPrefab == null) return;
         
         Canvas canvas = FindFirstObjectByType<Canvas>();
         if (canvas == null)
@@ -149,13 +197,14 @@ public class NetworkPlayerController : NetworkBehaviour
             totemPickupUI.Hide();
             totemPickupUI.ResetProgress();
         }
-        
-        Debug.Log("UI для подбора тотема инициализировано");
     }
     
     private void Update()
     {
-        if (!isLocalPlayer || !controlsEnabled) return;
+        if (!base.IsOwner || !controlsEnabled) return;
+        
+        // Задержка перед началом управления (2 секунды после спавна)
+        if (Time.time - spawnTime < 2f) return;
         
         GetInput();
         
@@ -170,8 +219,6 @@ public class NetworkPlayerController : NetworkBehaviour
     
     private void GetInput()
     {
-        if (!isMovementEnabled) return;
-        
         float horizontal = Input.GetAxis("Horizontal");
         float vertical = Input.GetAxis("Vertical");
         inputVector = new Vector2(horizontal, vertical);
@@ -304,82 +351,94 @@ public class NetworkPlayerController : NetworkBehaviour
         animator.SetBool("IsCarrying", isCarrying);
     }
     
-    public void UpdateCarryingAnimation(bool isCarrying)
+    private void OnCarryingChanged(bool prev, bool next, bool asServer)
+    {
+        UpdateCarryingAnimation(next);
+        
+        if (base.IsOwner && totemPickupUI != null)
+        {
+            if (next)
+            {
+                totemPickupUI.Show();
+                totemPickupUI.UpdateProgress(1f, 0f);
+            }
+            else
+            {
+                totemPickupUI.Hide();
+            }
+        }
+    }
+    
+    public void UpdateCarryingAnimation(bool carrying)
     {
         if (animator != null)
         {
-            animator.SetBool("IsCarrying", isCarrying);
+            animator.SetBool("IsCarrying", carrying);
         }
+    }
+    
+    [Server]
+    public void SetCarryingState(bool carrying)
+    {
+        IsCarryingTotemSync.Value = carrying;
     }
     
     public void OnPlayerDeath()
     {
-        if (!isLocalPlayer) return;
+        if (!base.IsOwner) return;
         
-        // Отключаем управление
         EnableControls(false);
         
-        // Отключаем компоненты
         if (playerCombat != null)
             playerCombat.enabled = false;
             
         if (aimingSystem != null)
             aimingSystem.enabled = false;
         
-        // Если несем тотем - сбрасываем его на сервере
         if (totemInteraction != null)
         {
             totemInteraction.OnPlayerDeath();
         }
         
-        // Отключаем контроллер
         if (characterController != null)
             characterController.enabled = false;
         
-        // Проигрываем анимацию смерти
         if (animator != null)
         {
             animator.SetTrigger("Die");
             animator.SetBool("IsDead", true);
         }
         
-        // Включаем курсор
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
-        
-        Debug.Log($"{gameObject.name} умер!");
     }
     
     public void OnPlayerRespawn()
     {
-        if (!isLocalPlayer) return;
+        if (!base.IsOwner) return;
         
-        // Включаем управление
         EnableControls(true);
         
-        // Включаем компоненты
         if (playerCombat != null)
             playerCombat.enabled = true;
             
         if (aimingSystem != null)
             aimingSystem.enabled = true;
         
-        // Включаем контроллер
         if (characterController != null)
             characterController.enabled = true;
         
-        // Сбрасываем анимацию смерти
         if (animator != null)
         {
             animator.SetBool("IsDead", false);
             animator.SetTrigger("Respawn");
         }
         
-        // Скрываем курсор
         Cursor.visible = false;
         Cursor.lockState = CursorLockMode.Confined;
         
-        Debug.Log($"{gameObject.name} возродился!");
+        // Переподключаем камеру
+        SetupCamera();
     }
     
     public void EnableControls(bool enable)
@@ -397,69 +456,15 @@ public class NetworkPlayerController : NetworkBehaviour
         {
             playerCombat.enabled = enable;
         }
-        
-        Debug.Log($"Controls {(enable ? "enabled" : "disabled")} for {gameObject.name}");
     }
     
     public bool IsCarryingTotem()
     {
-        return totemInteraction != null && totemInteraction.IsCarrying;
+        return totemInteraction != null && totemInteraction.IsCarrying.Value;
     }
     
     private void OnDestroy()
     {
-        if (isBeingDestroyed) return;
-        isBeingDestroyed = true;
-        
-        if (isApplicationQuitting) return;
-        
-        if (isLocalPlayer && totemPickupUIInstance != null)
-        {
-            Destroy(totemPickupUIInstance);
-        }
-        
-        if (isLocalPlayer && NetworkClient.active && !isApplicationQuitting)
-        {
-            if (IsCarryingTotem())
-            {
-                OnPlayerDeath();
-            }
-        }
-        
-        CancelInvoke();
-    }
-    
-    public override void OnStopClient()
-    {
-        base.OnStopClient();
-        
-        if (isLocalPlayer)
-        {
-            Cursor.visible = true;
-            Cursor.lockState = CursorLockMode.None;
-        }
-    }
-    
-    public override void OnStartAuthority()
-    {
-        base.OnStartAuthority();
-        Debug.Log($"Authority started for {gameObject.name}");
-    }
-    
-    public override void OnStopAuthority()
-    {
-        base.OnStopAuthority();
-        Debug.Log($"Authority stopped for {gameObject.name}");
-    }
-    
-    public void DebugLogState()
-    {
-        Debug.Log($"NetworkPlayerController State:");
-        Debug.Log($"- IsLocalPlayer: {isLocalPlayer}");
-        Debug.Log($"- IsMovementEnabled: {isMovementEnabled}");
-        Debug.Log($"- IsAttackEnabled: {isAttackEnabled}");
-        Debug.Log($"- IsCarryingTotem: {IsCarryingTotem()}");
-        Debug.Log($"- Health: {healthSystem?.currentHealth}/{healthSystem?.maxHealth}");
-        Debug.Log($"- Position: {transform.position}");
+        Debug.Log($"[NetworkPlayerController] OnDestroy - {gameObject.name}");
     }
 }

@@ -1,5 +1,5 @@
 using UnityEngine;
-using Mirror;
+using FishNet.Object;
 
 public class PlayerCombat : NetworkBehaviour
 {
@@ -32,14 +32,15 @@ public class PlayerCombat : NetworkBehaviour
     
     public bool PrimaryAttack(Vector3 targetPosition)
     {
-        if (!isLocalPlayer || magicianClass == null) return false;
+        // Только для локального игрока
+        if (!base.IsOwner || magicianClass == null) return false;
         
         return magicianClass.PrimaryAttack(targetPosition);
     }
     
     public bool UseAbility(int abilityIndex, Vector3 targetPosition)
     {
-        if (!isLocalPlayer || magicianClass == null) return false;
+        if (!base.IsOwner || magicianClass == null) return false;
         
         switch (abilityIndex)
         {
@@ -51,7 +52,7 @@ public class PlayerCombat : NetworkBehaviour
     
     public bool UseUltimate(Vector3 targetPosition)
     {
-        if (!isLocalPlayer || magicianClass == null) return false;
+        if (!base.IsOwner || magicianClass == null) return false;
         
         return magicianClass.UltimateAbility(targetPosition);
     }
