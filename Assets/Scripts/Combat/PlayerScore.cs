@@ -1,63 +1,94 @@
 using UnityEngine;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
+using TMPro;
 
+/// <summary>
+/// Хранит и синхронизирует очки игрока
+/// </summary>
 public class PlayerScore : NetworkBehaviour
 {
-    [Header("Player Info")]
-    public readonly SyncVar<int> playerId = new SyncVar<int>(0);
-    
-    [Header("Score")]
+    // Синхронизируемое значение очков
     public readonly SyncVar<int> score = new SyncVar<int>(0);
     
-    private GameManager gameManager;
+    [Header("UI")]
+    public TMP_Text scoreText; // Локальный текст для этого игрока (опционально)
     
-    public override void OnStartClient()
+    private string playerName;
+    
+    public override void OnStartNetwork()
     {
-        base.OnStartClient();
-        gameManager = FindFirstObjectByType<GameManager>();
+        base.OnStartNetwork();
         
-        // Подписываемся на изменения
+        // Подписываемся на изменения очков
         score.OnChange += OnScoreChanged;
-    }
-    
-    public override void OnStopClient()
-    {
-        base.OnStopClient();
-        score.OnChange -= OnScoreChanged;
-    }
-    
-    [ServerRpc]
-    public void CmdAddScore(int points)
-    {
-        AddScoreInternal(points);
-    }
-    
-    [Server]
-    private void AddScoreInternal(int points)
-    {
-        score.Value += points;
         
-        if (gameManager != null)
+        // Устанавливаем имя игрока (можно брать из профиля или сгенерировать)
+        playerName = $"Player {OwnerId}";
+        
+        // Регистрируем в таблице лидеров
+        if (LeaderboardManager.Instance != null)
         {
-            gameManager.AddScore(points);
+            LeaderboardManager.Instance.RegisterPlayer(this);
         }
     }
     
-    // Вызывается на клиенте для добавления очков
-    public void AddScore(int points)
+    public override void OnStopNetwork()
     {
-        if (base.IsOwner)
+        base.OnStopNetwork();
+        
+        score.OnChange -= OnScoreChanged;
+        
+        // Удаляем из таблицы лидеров
+        if (LeaderboardManager.Instance != null)
         {
-            CmdAddScore(points);
+            LeaderboardManager.Instance.UnregisterPlayer(this);
         }
     }
     
     /// <summary>
-    /// Обработчик изменения SyncVar
+    /// Добавляет очки игроку (только сервер)
     /// </summary>
+    [Server]
+    public void AddScore(int points)
+    {
+        if (points <= 0) return;
+        
+        score.Value += points;
+        Debug.Log($"[PlayerScore] {playerName} получил {points} очков. Всего: {score.Value}");
+    }
+    
+    /// <summary>
+    /// Устанавливает имя игрока
+    /// </summary>
+    [Server]
+    public void SetPlayerName(string name)
+    {
+        playerName = name;
+    }
+    
+    public string GetPlayerName()
+    {
+        return playerName;
+    }
+    
+    public int GetScore()
+    {
+        return score.Value;
+    }
+    
     private void OnScoreChanged(int prev, int next, bool asServer)
     {
-        Debug.Log($"Player {gameObject.name} score: {prev} -> {next}");
+        // Обновляем локальный UI если есть
+        if (scoreText != null)
+        {
+            scoreText.text = $"Очки: {next}";
+        }
+        
+        // Уведомляем таблицу лидеров об изменении
+        if (LeaderboardManager.Instance != null)
+        {
+            LeaderboardManager.Instance.UpdatePlayerScore(this);
+        }
     }
 }

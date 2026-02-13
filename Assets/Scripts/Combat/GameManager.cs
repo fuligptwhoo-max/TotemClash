@@ -202,8 +202,41 @@ public class GameManager : NetworkBehaviour
         if (carrierScoreAccumulator >= 1f)
         {
             int pointsToAdd = Mathf.FloorToInt(carrierScoreAccumulator);
-            syncTotalScore.Value += pointsToAdd;
             carrierScoreAccumulator -= pointsToAdd;
+            
+            // Находим игрока который несёт тотем и даём ему очки
+            int carrierId = totem.GetCarrierId();
+            AddScoreToPlayer(carrierId, pointsToAdd);
+        }
+    }
+    
+    /// <summary>
+    /// Добавляет очки конкретному игроку
+    /// </summary>
+    [Server]
+    private void AddScoreToPlayer(int playerId, int points)
+    {
+        // Находим игрока по ID
+        var players = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
+        foreach (var playerScore in players)
+        {
+            if (playerScore.OwnerId == playerId)
+            {
+                playerScore.AddScore(points);
+                Debug.Log($"[GameManager] Добавлено {points} очков игроку {playerId}");
+                return;
+            }
+        }
+        
+        // Если не нашли по OwnerId, пробуем найти по ObjectId
+        foreach (var playerScore in players)
+        {
+            if (playerScore.ObjectId == playerId)
+            {
+                playerScore.AddScore(points);
+                Debug.Log($"[GameManager] Добавлено {points} очков игроку (ObjectId) {playerId}");
+                return;
+            }
         }
     }
     
