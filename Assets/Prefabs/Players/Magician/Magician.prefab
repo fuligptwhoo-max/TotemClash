@@ -857,6 +857,8 @@ MonoBehaviour:
   _componentIndexCache: 5
   _addedNetworkObject: {fileID: 1206130023332332140}
   _networkObjectCache: {fileID: 1206130023332332140}
+  scoreText: {fileID: 0}
+  localScoreTextName: 
 --- !u!114 &3444612805250520568
 MonoBehaviour:
   m_ObjectHideFlags: 0
