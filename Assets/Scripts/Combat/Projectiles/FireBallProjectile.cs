@@ -43,6 +43,7 @@ public class FireballProjectile : NetworkBehaviour
         
         rb = GetComponent<Rigidbody>();
         
+
         // Создаем триггер для игроков
         triggerCollider = gameObject.AddComponent<SphereCollider>();
         triggerCollider.isTrigger = true;
@@ -62,10 +63,12 @@ public class FireballProjectile : NetworkBehaviour
         
         currentTargetPosition = initialTargetPosition;
         
-        if (rb != null)
+        // Запускаем снаряд ТОЛЬКО на сервере (физика сервера авторитетна)
+        if (rb != null && base.IsServerInitialized)
         {
             Vector3 direction = (currentTargetPosition - transform.position).normalized;
             rb.linearVelocity = direction * speed;
+            Debug.Log($"[Fireball] Launched! Speed: {speed}, Direction: {direction}");
         }
         
         if (base.IsServerInitialized)

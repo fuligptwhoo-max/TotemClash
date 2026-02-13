@@ -1,13 +1,14 @@
 using UnityEngine;
 using TMPro;
 using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using FishNet.Managing;
 
 /// <summary>
 /// GameManager - центральный менеджер игры
-/// Работает локально, время управляется сервером через SyncVar если есть сетевой объект
+/// Синхронизирует время и счёт между всеми клиентами
 /// </summary>
-public class GameManager : MonoBehaviour
+public class GameManager : NetworkBehaviour
 {
     public static GameManager Instance { get; private set; }
     
@@ -23,6 +24,11 @@ public class GameManager : MonoBehaviour
     [Header("Totem")]
     public TotemController totem;
     
+    // SyncVar для синхронизации времени и счёта
+    public readonly SyncVar<float> syncCurrentTime = new SyncVar<float>(300f);
+    public readonly SyncVar<int> syncTotalScore = new SyncVar<int>(0);
+    public readonly SyncVar<bool> syncGameActive = new SyncVar<bool>(false);
+    
     private bool isPaused = false;
     private float currentTime;
     private int totalScore = 0;
@@ -36,7 +42,6 @@ public class GameManager : MonoBehaviour
         if (Instance == null)
         {
             Instance = this;
-            currentTime = gameTime;
         }
         else
         {
@@ -44,18 +49,87 @@ public class GameManager : MonoBehaviour
         }
     }
     
+    public override void OnStartNetwork()
+    {
+        base.OnStartNetwork();
+        
+        // Подписываемся на изменения SyncVar
+        syncCurrentTime.OnChange += OnTimeChanged;
+        syncTotalScore.OnChange += OnScoreChanged;
+        syncGameActive.OnChange += OnGameActiveChanged;
+        
+        if (base.IsServerInitialized)
+        {
+            // Сервер инициализирует значения
+            syncCurrentTime.Value = gameTime;
+            syncTotalScore.Value = 0;
+            syncGameActive.Value = false;
+        }
+        
+        // Устанавливаем локальные значения из SyncVar
+        currentTime = syncCurrentTime.Value;
+        totalScore = syncTotalScore.Value;
+        isGameActive = syncGameActive.Value;
+    }
+    
+    public override void OnStopNetwork()
+    {
+        base.OnStopNetwork();
+        
+        syncCurrentTime.OnChange -= OnTimeChanged;
+        syncTotalScore.OnChange -= OnScoreChanged;
+        syncGameActive.OnChange -= OnGameActiveChanged;
+    }
+    
+    private void OnTimeChanged(float prev, float next, bool asServer)
+    {
+        currentTime = next;
+        UpdateTimerUI();
+    }
+    
+    private void OnScoreChanged(int prev, int next, bool asServer)
+    {
+        totalScore = next;
+        UpdateScoreUI();
+    }
+    
+    private void OnGameActiveChanged(bool prev, bool next, bool asServer)
+    {
+        isGameActive = next;
+    }
+    
     private void Start()
     {
         if (pauseMenu != null)
             pauseMenu.SetActive(false);
+        
+        // Находим UI элементы если не назначены
+        if (timerText == null)
+            timerText = GameObject.Find("TimerText")?.GetComponent<TMP_Text>();
+        if (scoreText == null)
+            scoreText = GameObject.Find("ScoreText")?.GetComponent<TMP_Text>();
+        
+        Debug.Log($"[GameManager] TimerText: {(timerText != null ? "found" : "NOT FOUND")}");
+        Debug.Log($"[GameManager] ScoreText: {(scoreText != null ? "found" : "NOT FOUND")}");
         
         FindTotem();
         
         // Включаем управление у всех игроков сразу
         EnableAllPlayerControls();
         
-        // Запускаем игру через 2 секунды
+        // Запускаем игру через 2 секунды (только сервер)
         gameStartTime = Time.time + 2f;
+        if (base.IsServerInitialized)
+        {
+            syncGameActive.Value = false;
+            syncCurrentTime.Value = gameTime;
+            syncTotalScore.Value = 0;
+        }
+        
+        // Инициализируем UI
+        UpdateTimerUI();
+        UpdateScoreUI();
+        
         Debug.Log("[GameManager] Game will start in 2 seconds...");
     }
     
@@ -67,7 +141,10 @@ public class GameManager : MonoBehaviour
         if (!gameStarted && Time.time >= gameStartTime)
         {
             gameStarted = true;
-            isGameActive = true;
+            if (base.IsServerInitialized)
+            {
+                syncGameActive.Value = true;
+            }
             Debug.Log("[GameManager] Game started!");
         }
         
@@ -84,20 +161,20 @@ public class GameManager : MonoBehaviour
     
     private void UpdateGameTime()
     {
-        // Только сервер обновляет время (или локальная игра)
-        if (!IsServer()) return;
+        // Только сервер обновляет время
+        if (!base.IsServerInitialized) return;
         
-        currentTime -= Time.deltaTime;
+        syncCurrentTime.Value -= Time.deltaTime;
         
-        if (currentTime <= 0f)
+        if (syncCurrentTime.Value <= 0f)
         {
-            currentTime = 0f;
-            isGameActive = false;
+            syncCurrentTime.Value = 0f;
+            syncGameActive.Value = false;
             OnGameEnded();
         }
     }
     
-    private bool IsServer()
+    private bool IsServerCheck()
     {
         // Проверяем есть ли NetworkManager и запущен ли сервер
         var nm = FindFirstObjectByType<NetworkManager>();
@@ -113,7 +190,7 @@ public class GameManager : MonoBehaviour
     
     private void UpdateScoreFromTotem()
     {
-        if (!IsServer()) return;
+        if (!base.IsServerInitialized) return;
         if (totem == null || !totem.IsBeingCarried())
         {
             carrierScoreAccumulator = 0f;
@@ -125,7 +202,7 @@ public class GameManager : MonoBehaviour
         if (carrierScoreAccumulator >= 1f)
         {
             int pointsToAdd = Mathf.FloorToInt(carrierScoreAccumulator);
-            AddScore(pointsToAdd);
+            syncTotalScore.Value += pointsToAdd;
             carrierScoreAccumulator -= pointsToAdd;
         }
     }
@@ -155,10 +232,10 @@ public class GameManager : MonoBehaviour
     /// </summary>
     public void AddScore(int points)
     {
-        if (!IsServer()) return;
+        if (!base.IsServerInitialized) return;
         
-        totalScore += points;
-        Debug.Log($"[SERVER] Score added: {points}, Total: {totalScore}");
+        syncTotalScore.Value += points;
+        Debug.Log($"[SERVER] Score added: {points}, Total: {syncTotalScore.Value}");
     }
     
     private void UpdateTimerUI()

@@ -87,6 +87,9 @@ public class HealthSystem : NetworkBehaviour
     {
         Debug.Log($"RpcDie called for {gameObject.name}");
         
+        // Запускаем анимацию смерти
+        StartCoroutine(DeathAnimation());
+        
         if (deathEffect != null) 
         {
             GameObject effect = Instantiate(deathEffect, transform.position, Quaternion.identity);
@@ -108,6 +111,51 @@ public class HealthSystem : NetworkBehaviour
         if (base.IsServerInitialized)
         {
             StartCoroutine(ServerRespawn(3f));
+        }
+    }
+    
+    /// <summary>
+    /// Анимация смерти - подпрыгивание и падение
+    /// </summary>
+    IEnumerator DeathAnimation()
+    {
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            // Отключаем управление физикой на время анимации
+            rb.isKinematic = false;
+            
+            // Подбрасываем вверх и назад
+            Vector3 jumpForce = new Vector3(Random.Range(-2f, 2f), 8f, Random.Range(-2f, 2f));
+            rb.AddForce(jumpForce, ForceMode.Impulse);
+            
+            // Добавляем вращение
+            rb.AddTorque(Random.insideUnitSphere * 10f, ForceMode.Impulse);
+            
+            // Ждём 1 секунду
+            yield return new WaitForSeconds(1f);
+            
+            // Включаем обратно кинематик перед респавном
+            rb.isKinematic = true;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+        else
+        {
+            // Если нет Rigidbody - просто подпрыгиваем через трансформ
+            Vector3 startPos = transform.position;
+            float duration = 1f;
+            float elapsed = 0f;
+            
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = elapsed / duration;
+                // Параболическая траектория
+                float height = Mathf.Sin(t * Mathf.PI) * 3f;
+                transform.position = startPos + Vector3.up * height;
+                yield return null;
+            }
         }
     }
 
