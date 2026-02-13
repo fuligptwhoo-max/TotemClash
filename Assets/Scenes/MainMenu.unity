@@ -1443,17 +1443,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &999999997 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 11400002, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-  m_PrefabInstance: {fileID: 999999998}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d2c95dfde7d73b54dbbdc23155d35d36, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: FishNet.Runtime::FishNet.Managing.NetworkManager
 --- !u!1001 &999999998
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -3513,7 +3502,7 @@ MonoBehaviour:
   ipInputField: {fileID: 1666090282}
   statusText: {fileID: 2011519447}
   loadingPanel: {fileID: 1162981678}
-  networkManager: {fileID: 999999997}
+  networkManager: {fileID: 0}
   gameSceneName: SampleScene
 --- !u!4 &2043718056
 Transform:

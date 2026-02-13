@@ -265,6 +265,32 @@ public class MyNetworkManager : MonoBehaviour
         spawnedPlayers.Clear();
         
         InitializeSpawnPoints();
+        
+        // Логируем сетевую информацию с задержкой
+        Invoke(nameof(LogNetworkInfo), 1f);
+    }
+    
+    private void LogNetworkInfo()
+    {
+        if (_networkManager == null) return;
+        
+        Debug.Log("=== NETWORK INFO ===");
+        Debug.Log($"[MyNetworkManager] IsServerStarted: {_networkManager.IsServerStarted}");
+        Debug.Log($"[MyNetworkManager] IsClientStarted: {_networkManager.IsClientStarted}");
+        
+        if (_networkManager.ServerManager != null)
+        {
+            Debug.Log($"[MyNetworkManager] ServerManager.Started: {_networkManager.ServerManager.Started}");
+        }
+        
+        if (_networkManager.TransportManager?.Transport != null)
+        {
+            var t = _networkManager.TransportManager.Transport;
+            Debug.Log($"[MyNetworkManager] Transport: {t.GetType().Name}");
+            Debug.Log($"[MyNetworkManager] Port: {t.GetPort()}");
+            Debug.Log($"[MyNetworkManager] Bind Address (IPv4): '{t.GetServerBindAddress(FishNet.Transporting.IPAddressType.IPv4)}'");
+        }
+        Debug.Log("====================");
     }
     
     private void InitializeSpawnPoints()

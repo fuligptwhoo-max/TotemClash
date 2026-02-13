@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine.UI;
 using FishNet.Managing;
 using FishNet.Managing.Scened;
+using FishNet.Transporting;
 
 /// <summary>
 /// Главное меню игры + Network меню
@@ -173,8 +174,23 @@ public class MainMenu : MonoBehaviour
         
         Debug.Log("[MainMenu] Starting as Host...");
         
+        // Настраиваем сервер на приём подключений со всех интерфейсов
+        if (networkManager.TransportManager?.Transport != null)
+        {
+            var transport = networkManager.TransportManager.Transport;
+            transport.SetServerBindAddress("0.0.0.0", FishNet.Transporting.IPAddressType.IPv4);
+            Debug.Log($"[MainMenu] Server bind address set to: 0.0.0.0 (all interfaces)");
+            Debug.Log($"[MainMenu] Server will listen on port: {transport.GetPort()}");
+        }
+        else
+        {
+            Debug.LogError("[MainMenu] Transport not found! Cannot configure server.");
+        }
+        
         // Запускаем сервер
         bool serverStarted = networkManager.ServerManager.StartConnection();
+        Debug.Log($"[MainMenu] Server start result: {serverStarted}");
+        Debug.Log($"[MainMenu] ServerManager.Started: {networkManager.ServerManager.Started}");
         if (!serverStarted)
         {
             UpdateStatus("Failed to start server!");
@@ -215,19 +231,65 @@ public class MainMenu : MonoBehaviour
         
         Debug.Log($"[MainMenu] Connecting to {ip}...");
         
+        // Проверяем доступность IP через Ping
+        StartCoroutine(CheckServerAvailability(ip, 7770));
+    }
+    
+    /// <summary>
+    /// Проверяет доступность сервера перед подключением
+    /// </summary>
+    private System.Collections.IEnumerator CheckServerAvailability(string ip, int port)
+    {
+        Debug.Log($"[MainMenu] Checking if server {ip}:{port} is reachable...");
+        
+        // Пробуем пинг
+        System.Net.NetworkInformation.Ping ping = new System.Net.NetworkInformation.Ping();
+        System.Net.NetworkInformation.PingReply reply = null;
+        
+        try
+        {
+            reply = ping.Send(ip, 1000);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[MainMenu] Ping failed: {e.Message}");
+        }
+        
+        if (reply != null && reply.Status == System.Net.NetworkInformation.IPStatus.Success)
+        {
+            Debug.Log($"[MainMenu] Ping successful! Roundtrip: {reply.RoundtripTime}ms");
+        }
+        else
+        {
+            Debug.LogWarning($"[MainMenu] Ping failed or timed out. Status: {(reply?.Status.ToString() ?? "null")}");
+            Debug.LogWarning($"[MainMenu] Server may be behind firewall or unreachable.");
+        }
+        
+        // Логируем настройки транспорта
+        if (networkManager.TransportManager?.Transport != null)
+        {
+            var transport = networkManager.TransportManager.Transport;
+            Debug.Log($"[MainMenu] Transport: {transport.GetType().Name}");
+            Debug.Log($"[MainMenu] Target port: {transport.GetPort()}");
+        }
+        
         // Запускаем клиент
+        Debug.Log($"[MainMenu] Starting client connection to {ip}...");
         bool clientStarted = networkManager.ClientManager.StartConnection(ip);
+        Debug.Log($"[MainMenu] Client start result: {clientStarted}");
         if (!clientStarted)
         {
             UpdateStatus("Failed to connect!");
             connectionInProgress = false;
-            return;
+            yield break;
         }
         
         Debug.Log("[MainMenu] Client started, waiting for connection...");
         
-        // Ждём подключения к серверу
-        StartCoroutine(LoadGameSceneWhenReady());
+        // Клиент ждёт подключения - сцена загрузится автоматически от сервера
+        StartCoroutine(WaitForClientConnection());
+        
+        yield break;
     }
     
     public void OnServerClicked()
@@ -245,6 +307,14 @@ public class MainMenu : MonoBehaviour
         UpdateStatus("Starting as Server only...");
         
         Debug.Log("[MainMenu] Starting as Server only...");
+        
+        // Настраиваем сервер на приём подключений со всех интерфейсов
+        if (networkManager.TransportManager?.Transport != null)
+        {
+            var transport = networkManager.TransportManager.Transport;
+            transport.SetServerBindAddress("0.0.0.0", FishNet.Transporting.IPAddressType.IPv4);
+            Debug.Log($"[MainMenu] Server bind address set to: 0.0.0.0 (all interfaces)");
+        }
         
         // Запускаем сервер
         bool serverStarted = networkManager.ServerManager.StartConnection();
@@ -277,7 +347,60 @@ public class MainMenu : MonoBehaviour
     #region Coroutines
     
     /// <summary>
-    /// Ждёт пока клиент подключится, затем загружает игровую сцену
+    /// Ждёт пока клиент подключится к серверу (только для клиента, не загружает сцену)
+    /// </summary>
+    private System.Collections.IEnumerator WaitForClientConnection()
+    {
+        float timeout = 15f;
+        float elapsed = 0f;
+        float lastLogTime = 0f;
+        
+        Debug.Log("[MainMenu] Waiting for client connection...");
+        
+        while (networkManager.ClientManager != null && 
+               !networkManager.ClientManager.Connection.IsValid && 
+               elapsed < timeout)
+        {
+            elapsed += Time.deltaTime;
+            
+            // Логируем каждые 3 секунды
+            if (elapsed - lastLogTime >= 3f)
+            {
+                lastLogTime = elapsed;
+                Debug.Log($"[MainMenu] Still waiting for connection... ({elapsed:F1}s / {timeout}s)");
+            }
+            
+            yield return null;
+        }
+        
+        if (networkManager.ClientManager != null && networkManager.ClientManager.Connection.IsValid)
+        {
+            Debug.Log("[MainMenu] Client connected! Waiting for server to load scene...");
+            Debug.Log($"[MainMenu] Connection ID: {networkManager.ClientManager.Connection.ClientId}");
+            UpdateStatus("Connected! Waiting for server...");
+            // Сцена загрузится автоматически от сервера через FishNet SceneManager
+        }
+        else
+        {
+            Debug.LogError("[MainMenu] Failed to connect to server!");
+            if (networkManager.ClientManager != null)
+            {
+                Debug.LogError($"[MainMenu] ClientManager.Started: {networkManager.ClientManager.Started}");
+                // ClientManager не имеет свойства ConnectionState в FishNet
+                if (networkManager.ClientManager.Connection != null)
+                {
+                    Debug.LogError($"[MainMenu] Connection.IsValid: {networkManager.ClientManager.Connection.IsValid}");
+                    Debug.LogError($"[MainMenu] Connection.ClientId: {networkManager.ClientManager.Connection.ClientId}");
+                }
+            }
+            UpdateStatus("Connection failed! Check firewall.");
+            connectionInProgress = false;
+            ShowNetworkMenu();
+        }
+    }
+    
+    /// <summary>
+    /// Ждёт пока клиент подключится, затем загружает игровую сцену (только для Host/Server!)
     /// </summary>
     private System.Collections.IEnumerator LoadGameSceneWhenReady()
     {
@@ -291,7 +414,15 @@ public class MainMenu : MonoBehaviour
             yield break;
         }
         
-        // Проверяем, подключен ли клиент (если мы хост или клиент)
+        // ТОЛЬКО СЕРВЕР может загружать глобальные сцены!
+        if (!networkManager.ServerManager.Started)
+        {
+            Debug.LogError("[MainMenu] Cannot load scene - not running as server!");
+            connectionInProgress = false;
+            yield break;
+        }
+        
+        // Проверяем, подключен ли клиент (если мы хост)
         if (networkManager.ClientManager != null && networkManager.ClientManager.Started)
         {
             // Ждём пока клиент будет готов
