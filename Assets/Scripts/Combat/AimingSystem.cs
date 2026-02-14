@@ -217,4 +217,15 @@ public class AimingSystem : MonoBehaviour
             Destroy(crosshairObject);
         }
     }
+    
+    /// <summary>
+    /// Показывает или скрывает прицел
+    /// </summary>
+    public void ShowCrosshair(bool show)
+    {
+        if (crosshairObject != null)
+        {
+            crosshairObject.SetActive(show);
+        }
+    }
 }

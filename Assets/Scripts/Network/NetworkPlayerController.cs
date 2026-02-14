@@ -203,6 +203,9 @@ public class NetworkPlayerController : NetworkBehaviour
     {
         if (!base.IsOwner || !controlsEnabled) return;
         
+        // Не даём управлять если игра на паузе
+        if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused()) return;
+        
         // Задержка перед началом управления (2 секунды после спавна)
         if (Time.time - spawnTime < 2f) return;
         
@@ -226,6 +229,9 @@ public class NetworkPlayerController : NetworkBehaviour
     
     private void HandleInput()
     {
+        // Не обрабатываем боевой ввод если игра на паузе
+        if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused()) return;
+        
         if (Input.GetKeyDown(attackKey) && isAttackEnabled)
         {
             if (Time.time - lastAttackTime >= attackCooldown)

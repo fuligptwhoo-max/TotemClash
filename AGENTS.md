@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Totem Clash** is a multiplayer 3D arena combat game built in Unity. Players control magician characters, cast fireball spells at each other, and compete to capture and hold a totem for points. The game supports client-server multiplayer architecture using FishNet networking framework.
+**Totem Clash** is a multiplayer 3D arena combat game built in Unity. Players control magician characters, cast fireball spells at each other, and compete to capture and hold a totem for points. The game uses a client-server multiplayer architecture with FishNet networking framework.
 
 ### Key Information
 - **Project Name**: Totem Clash
@@ -21,14 +21,14 @@
 |-----------|---------|-------------|
 | Unity Editor | 6000.2.6f2 | Unity 6 LTS |
 | Render Pipeline | URP 17.2.0 | Universal Render Pipeline |
-| Networking | FishNet 4.6.20 | Primary networking framework |
+| Networking | FishNet 4.x | Feature-rich networking solution |
 | Input System | 1.14.2 | New Unity Input System |
-| Text Rendering | TextMesh Pro | UI text rendering |
+| Text Rendering | TextMeshPro | UI text rendering |
 | glTF Support | 2.18.5 | UnityGLTF from Needle Tools |
 
 ### Third-Party Packages
-- **FishNet**: Feature-rich networking solution (migrated from Mirror)
-- **UnityGLTF**: glTF format support for 3D models
+- **FishNet**: Open-source networking library with IL weaving
+- **UnityGLTF**: Khronos Group glTF implementation for 3D models
 - **Newtonsoft JSON**: JSON serialization
 
 ### Scripting & Compilation
@@ -37,9 +37,9 @@
 - **API Compatibility**: .NET Framework
 - **Scripting Defines**:
   - `MainCamera`
-  - `MIRROR` (legacy compatibility)
-  - `MIRROR_89_OR_NEWER`, `MIRROR_90_OR_NEWER`, `MIRROR_93_OR_NEWER`, `MIRROR_96_OR_NEWER`
+  - `MIRROR`, `MIRROR_89_OR_NEWER`, `MIRROR_90_OR_NEWER`, `MIRROR_93_OR_NEWER`, `MIRROR_96_OR_NEWER` (legacy)
   - `EDGEGAP_PLUGIN_SERVERS`
+  - `FISHNET`, `FISHNET_V4` (Standalone)
 
 ---
 
@@ -47,11 +47,13 @@
 
 ```
 d:\programs\unity\source/
+├── .git/                      # Git version control
+├── .plastic/                  # Plastic SCM configuration
+├── .vscode/                   # VS Code settings
 ├── Assets/
-│   ├── _Recovery/              # Recovery/backup files
-│   ├── Animations/             # Character animations
-│   ├── Audio/                  # Sound effects and music
-│   ├── FishNet/               # FishNet networking library (1934+ files)
+│   ├── Animations/            # Character animation assets
+│   ├── Audio/                 # Sound effects and music
+│   ├── FishNet/               # FishNet networking library (1900+ files)
 │   │   ├── CodeGenerating/    # IL weaving and code generation
 │   │   ├── Demos/             # Example scenes and scripts
 │   │   └── Runtime/           # Core networking runtime
@@ -61,13 +63,15 @@ d:\programs\unity\source/
 │   ├── Prefabs/
 │   │   ├── Players/Magician/  # Player character prefab
 │   │   ├── Projectiles/       # Fireball projectile prefab
-│   │   └── Totem/             # Game objective prefab
+│   │   ├── Totem/             # Game objective prefab
+│   │   └── UI/                # UI element prefabs
 │   ├── Resources/             # Runtime-loaded resources
 │   ├── Scenes/
+│   │   ├── MainMenu.unity     # Main menu scene
 │   │   └── SampleScene.unity  # Main game scene
 │   ├── SceneSwitcherPro/      # Scene management tool
-│   ├── Scripts/               # Game logic (19 C# files)
-│   │   ├── Classes/           # Character classes (MagicianClass.cs)
+│   ├── Scripts/               # Game logic (28 C# files)
+│   │   ├── Classes/           # Character classes
 │   │   ├── Combat/            # Combat systems
 │   │   ├── Network/           # Network management
 │   │   └── UI/                # User interface
@@ -98,11 +102,11 @@ Assets/Scripts/
 │   ├── AimingSystem.cs        # Player targeting system
 │   ├── AttackRangeDetector.cs # Combat range detection
 │   ├── CameraController.cs    # Third-person camera
-│   ├── GameManager.cs         # Game state, timer, scoring
-│   ├── HealthSystem.cs        # Player health and respawn
-│   ├── PlayerCombat.cs        # Combat input handling
-│   ├── PlayerScore.cs         # Score tracking
-│   ├── PlayerTotemInteraction.cs  # Totem pickup mechanics
+│   ├── GameManager.cs         # Game state, timer, scoring (server-authoritative)
+│   ├── HealthSystem.cs        # Player health, damage, respawn
+│   ├── PlayerCombat.cs        # Combat input handling, ability usage
+│   ├── PlayerScore.cs         # Score tracking with SyncVar
+│   ├── PlayerTotemInteraction.cs  # Totem pickup/drop mechanics
 │   ├── SpawnPointManager.cs   # Player spawn management
 │   ├── TotemController.cs     # Totem game objective logic
 │   └── Projectiles/
@@ -111,34 +115,44 @@ Assets/Scripts/
 │       ├── LightningProjectile.cs  # Future lightning ability
 │       └── MeteorProjectile.cs     # Future meteor ability
 ├── Network/
-│   ├── MyNetworkManager.cs         # Custom network manager (composition pattern)
-│   └── NetworkPlayerController.cs  # Networked player movement
+│   ├── GameSettings.cs            # Synchronized game configuration
+│   ├── GameStateNetworkSync.cs    # Network state synchronization
+│   ├── MyNetworkManager.cs        # Custom network manager (composition pattern)
+│   └── NetworkPlayerController.cs # Networked player movement and input
 └── UI/
-    └── TotemPickUpUI.cs       # Totem interaction UI
+    ├── CountdownDisplay.cs    # Pre-game countdown UI
+    ├── GameOverMenu.cs        # End game screen
+    ├── LeaderboardManager.cs  # Scoreboard with Tab toggle
+    ├── LobbyManager.cs        # Pre-game lobby UI
+    ├── LocalScoreDisplay.cs   # Local player score UI
+    ├── MainMenu.cs            # Main menu with Host/Client options
+    ├── PauseMenu.cs           # In-game pause menu
+    └── TotemPickUpUI.cs       # Totem interaction progress UI
 ```
 
 ### Key Architectural Patterns
 
-1. **Composition over Inheritance**: FishNet's `NetworkManager` is sealed, so `MyNetworkManager` uses composition pattern
+1. **Composition over Inheritance**: FishNet's `NetworkManager` is sealed (cannot inherit), so `MyNetworkManager` uses composition pattern
 2. **NetworkBehaviour Components**: Player logic split across multiple networked components
-3. **SyncVar for State**: Game state synchronized using FishNet `[SyncVar]` attributes
+3. **SyncVar for State**: Game state synchronized using FishNet `[SyncVar]` attributes with OnChange hooks
 4. **Server-Authoritative**: Combat and scoring logic runs on server
 5. **Static Player Registry**: `MagicianClass` maintains static dictionary of all players for auto-aim
+6. **Singleton Pattern**: Used for GameManager, LeaderboardManager, and other managers
 
 ---
 
 ## Networking Architecture
 
 ### FishNet Migration
-The project was migrated from **Mirror** to **FishNet**. See `Assets/Scripts/README-Migration.md` for detailed migration guide.
+The project was migrated from **Mirror** to **FishNet 4.x**. See `Assets/Scripts/README-Migration.md` for detailed migration guide.
 
 ### Key API Differences (Mirror → FishNet)
 
 | Mirror | FishNet |
 |--------|---------|
 | `using Mirror;` | `using FishNet.Object;` |
-| `isServer` | `base.IsServer` |
-| `isClient` | `base.IsClient` |
+| `isServer` | `base.IsServerInitialized` |
+| `isClient` | `base.IsClientInitialized` |
 | `isLocalPlayer` | `base.IsOwner` |
 | `netId` (uint) | `ObjectId` (int) |
 | `[Command]` | `[ServerRpc]` |
@@ -149,52 +163,94 @@ The project was migrated from **Mirror** to **FishNet**. See `Assets/Scripts/REA
 ### Network Components
 
 **MyNetworkManager** (`Scripts/Network/MyNetworkManager.cs`):
-- Handles player connection/disconnection
-- Manages spawn points
+- Composition-based wrapper around FishNet NetworkManager
+- Handles player connection/disconnection events
+- Manages spawn points (manual list or auto-detected by tag)
 - Player respawn logic
 - Scene restart functionality
+- Prevents duplicate player spawns
 
 **NetworkPlayerController** (`Scripts/Network/NetworkPlayerController.cs`):
-- Networked player movement
-- Input synchronization
-- Owner-only control logic
+- Owner-only input handling
+- Synchronized movement via CharacterController
+- Animation state management
+- Totem pickup/drop input
+- Camera setup for local player
 
-**GameStateNetworkSync** (embedded in `GameManager.cs`):
-- Server-authoritative game timer
-- Score synchronization via SyncVar
-- Game end state management
+**GameSettings** (`Scripts/Network/GameSettings.cs`):
+- Server-authoritative game configuration
+- Persists settings between game restarts using static variables
+- SyncVar for: GameTime, PlayerSpeed, ProjectileSpeed, DamagePerHit
+
+**PlayerScore** (`Scripts/Combat/PlayerScore.cs`):
+- SyncVar<int> for synchronized score
+- Automatic leaderboard registration
 
 ---
 
 ## Game Mechanics
 
 ### Core Gameplay Loop
-1. Players spawn at designated spawn points
-2. Players use fireball spells to attack opponents
-3. A totem spawns in the arena
-4. Players compete to pick up and hold the totem
-5. Holding the totem earns points over time
-6. Game ends when timer reaches zero
+1. Players connect via MainMenu (Host/Client/Server options)
+2. Lobby phase where host can configure game settings
+3. Countdown before match start
+4. Players spawn at designated spawn points
+5. Players use fireball spells to attack opponents
+6. Totem spawns in the arena
+7. Players compete to pick up and hold the totem (E key)
+8. Holding the totem earns points over time (with multiplier)
+9. Game ends when timer reaches zero
+10. Leaderboard displayed with final scores
 
 ### Combat System
 - **Primary Attack**: Fireball projectile with auto-aim
-- **Auto-Aim**: Targets nearest player within range and angle
+- **Auto-Aim**: Targets nearest player within range and angle (45° cone, 15m range)
 - **Projectile Physics**: Fireballs use Rigidbody physics
-- **Damage**: Health system with respawn on death
+- **Damage**: Server-authoritative with 0.1s cooldown
+- **Death**: Physics-based death animation (ragdoll), respawn after 3 seconds
 
 ### Character Class: Magician
 Located in `MagicianClass.cs`:
-- Fireball casting with cooldown
-- Animation integration
-- Auto-aim targeting system
+- Fireball casting with cooldown (1 second default)
+- Animation integration with attack delay
+- Auto-aim targeting system with obstacle checking
 - Static player tracker for all magician instances
+- Future ability placeholders (Ability1, Ability2, Ultimate)
 
 ### Totem System
 Located in `TotemController.cs`:
-- Pickup by players
-- Carried state with visual feedback
-- Score accumulation while carried
-- Drop on player death
+- Pickup by players within range (2m default)
+- Carried state with visual feedback (smooth follow)
+- Score accumulation while carried (multiplier increases over time)
+- Drop on player death or G key press
+- Server-authoritative state management
+
+---
+
+## Input System
+
+### Player Controls (Keyboard & Mouse)
+| Action | Key |
+|--------|-----|
+| Move | WASD / Arrow Keys |
+| Look | Mouse |
+| Attack | Left Mouse Button |
+| Ability 1 | Q |
+| Ability 2 | R |
+| Ultimate | F |
+| Pickup/Drop Totem | E |
+| Drop Totem | G |
+| Jump | Space |
+| Sprint | Left Shift |
+| Show Leaderboard | Tab |
+| Pause | Escape |
+
+### UI Controls
+| Action | Key |
+|--------|-----|
+| Navigate | WASD / Arrow Keys |
+| Submit | Enter / Space |
+| Cancel | Escape |
 
 ---
 
@@ -236,22 +292,30 @@ Defined in `TagManager.asset`:
 - `Ground` - Walkable surfaces
 - `Projectile` - Projectile objects
 - `SpawnPoint` - Player spawn locations
+- `LocalScore` - Local player score UI
 
 ### Physics Layers
+- Layer 0: Default
 - Layer 3: Ground
+- Layer 4: Water
+- Layer 5: UI
 - Layer 6: Player
 - Layer 7: Enemy
 - Layer 8: Projectile
+- Layer 9: LocalScore
 
 ### Prefab Structure
 Player prefab (`Prefabs/Players/Magician/Magician.prefab`) contains:
 - `NetworkObject` - FishNet network identity
-- `NetworkPlayerController` - Movement
+- `NetworkPlayerController` - Movement and input
 - `PlayerCombat` - Combat controller
 - `MagicianClass` - Class abilities
 - `HealthSystem` - Damage/health
+- `PlayerScore` - Score tracking
+- `PlayerTotemInteraction` - Totem mechanics
 - `AimingSystem` - Targeting
 - `Animator` - Animation control
+- `CharacterController` - Physics-based movement
 
 ---
 
@@ -259,38 +323,50 @@ Player prefab (`Prefabs/Players/Magician/Magician.prefab`) contains:
 
 ### Local Testing Setup
 1. Open project in Unity Editor
-2. Press Play to start as Server+Client
-3. Build and run second instance as Client
-4. Connect to `localhost:7777`
+2. Open MainMenu scene
+3. Press Play to start
+4. Click "Play" → "Host" to start as Server+Client
+5. Build and run second instance as Client
+6. Connect to `localhost:7777`
 
 ### Key Debug Features
 - Extensive `Debug.Log()` statements in network code
 - Player tracker debug output
 - Spawn point visualization
 - Fireball trajectory logging
+- FishNet network profiler available
 
 ### Network Debugging
-- FishNet provides built-in network profiler
+- FishNet provides built-in network profiler (Window → FishNet → Network Profiler)
 - Connection state events logged
 - RPC call tracing available
 
 ---
 
-## Known Issues & Considerations
+## Key Configuration Files
 
-### Migration Artifacts
-- Some Mirror-related scripting defines still present
-- Documentation references both Mirror and FishNet
+| Purpose | Path |
+|---------|------|
+| Package Dependencies | `Packages/manifest.json` |
+| Project Settings | `ProjectSettings/ProjectSettings.asset` |
+| Input Actions | `Assets/InputSystem_Actions.inputactions` |
+| Tag Manager | `ProjectSettings/TagManager.asset` |
+| URP Settings | `Assets/Settings/` |
 
-### Network Considerations
-- FishNet NetworkManager is sealed (cannot inherit)
-- Use composition pattern for custom network manager
-- Server must be running for game timer to function
+---
 
-### Performance Notes
-- Static player dictionary in `MagicianClass` for O(1) lookup
-- Auto-aim uses angle and distance scoring
-- Projectile instantiation uses object pooling considerations
+## File Locations Quick Reference
+
+| Purpose | Path |
+|---------|------|
+| Main Menu Scene | `Assets/Scenes/MainMenu.unity` |
+| Game Scene | `Assets/Scenes/SampleScene.unity` |
+| Network Manager | `Assets/Scripts/Network/MyNetworkManager.cs` |
+| Game Logic | `Assets/Scripts/Combat/GameManager.cs` |
+| Player Prefab | `Assets/Prefabs/Players/Magician/Magician.prefab` |
+| Totem Prefab | `Assets/Prefabs/Totem/Totem.prefab` |
+| Fireball Prefab | `Assets/Prefabs/Projectiles/Fireball.prefab` |
+| Migration Guide | `Assets/Scripts/README-Migration.md` |
 
 ---
 
@@ -307,19 +383,22 @@ Player prefab (`Prefabs/Players/Magician/Magician.prefab`) contains:
 
 ---
 
-## File Locations Quick Reference
+## Known Issues & Considerations
 
-| Purpose | Path |
-|---------|------|
-| Main Scene | `Assets/Scenes/SampleScene.unity` |
-| Network Manager | `Assets/Scripts/Network/MyNetworkManager.cs` |
-| Game Logic | `Assets/Scripts/Combat/GameManager.cs` |
-| Player Prefab | `Assets/Prefabs/Players/Magician/Magician.prefab` |
-| Totem Prefab | `Assets/Prefabs/Totem/Totem.prefab` |
-| Input Actions | `Assets/InputSystem_Actions.inputactions` |
-| Migration Guide | `Assets/Scripts/README-Migration.md` |
-| Package Manifest | `Packages/manifest.json` |
-| Project Settings | `ProjectSettings/ProjectSettings.asset` |
+### Migration Artifacts
+- Some Mirror-related scripting defines still present in ProjectSettings
+- Documentation references both Mirror and FishNet in some places
+
+### Network Considerations
+- FishNet NetworkManager is sealed (cannot inherit)
+- Use composition pattern for custom network manager
+- Server must be running for game timer to function
+- Player spawn delayed until after scene load to avoid race conditions
+
+### Performance Notes
+- Static player dictionary in `MagicianClass` for O(1) lookup
+- Auto-aim uses angle and distance scoring
+- Projectile instantiation uses standard Instantiate (no object pooling currently)
 
 ---
 
@@ -327,7 +406,7 @@ Player prefab (`Prefabs/Players/Magician/Magician.prefab`) contains:
 
 - **FishNet**: Open source networking library
 - **UnityGLTF**: Khronos Group glTF implementation
-- **TextMesh Pro**: Unity Technologies
+- **TextMeshPro**: Unity Technologies
 - **Magician Model**: Third-party asset (check specific license in Models folder)
 
 ---
