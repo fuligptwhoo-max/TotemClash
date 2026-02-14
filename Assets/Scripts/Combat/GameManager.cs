@@ -3,6 +3,7 @@ using TMPro;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 using FishNet.Managing;
+using System.Collections.Generic;
 
 /// <summary>
 /// GameManager - центральный менеджер игры
@@ -128,6 +129,12 @@ public class GameManager : NetworkBehaviour
         // Запускаем обратный отсчёт через CountdownDisplay
         if (base.IsServerInitialized && countdownDisplay != null)
         {
+            // Спавним ожидающих игроков (которые подключились в лобби)
+            if (MyNetworkManager.Instance != null)
+            {
+                MyNetworkManager.Instance.SpawnPendingPlayers();
+            }
+            
             countdownDisplay.StartCountdown();
             
             // Запускаем игру после отсчёта
@@ -152,17 +159,119 @@ public class GameManager : NetworkBehaviour
         Debug.Log("[GameManager] Game started!");
     }
     
+    public override void OnStartClient()
+    {
+        base.OnStartClient();
+        
+        // На клиенте применяем настройки когда они изменяются
+        if (GameSettings.Instance != null)
+        {
+            GameSettings.Instance.GameTime.OnChange += OnGameTimeSettingChanged;
+            GameSettings.Instance.PlayerSpeed.OnChange += OnPlayerSpeedSettingChanged;
+            GameSettings.Instance.ProjectileSpeed.OnChange += OnProjectileSpeedSettingChanged;
+            GameSettings.Instance.DamagePerHit.OnChange += OnDamageSettingChanged;
+        }
+    }
+    
+    public override void OnStopClient()
+    {
+        base.OnStopClient();
+        
+        if (GameSettings.Instance != null)
+        {
+            GameSettings.Instance.GameTime.OnChange -= OnGameTimeSettingChanged;
+            GameSettings.Instance.PlayerSpeed.OnChange -= OnPlayerSpeedSettingChanged;
+            GameSettings.Instance.ProjectileSpeed.OnChange -= OnProjectileSpeedSettingChanged;
+            GameSettings.Instance.DamagePerHit.OnChange -= OnDamageSettingChanged;
+        }
+    }
+    
+    private void OnGameTimeSettingChanged(float prev, float next, bool asServer)
+    {
+        if (asServer)
+        {
+            // На сервере обновляем текущее время игры
+            gameTime = next;
+            // Если игра активна, добавляем разницу к текущему времени
+            if (isGameActive && !gameEnded)
+            {
+                float diff = next - prev;
+                syncCurrentTime.Value += diff;
+                Debug.Log($"[GameManager] GameTime setting changed on server: {prev} -> {next}, adjusted current time by {diff}");
+            }
+            else
+            {
+                // Если игра не активна, просто обновляем начальное время
+                syncCurrentTime.Value = next;
+                Debug.Log($"[GameManager] GameTime setting updated on server: {next}");
+            }
+        }
+        else
+        {
+            gameTime = next;
+            Debug.Log($"[GameManager] GameTime setting updated on client: {next}");
+        }
+    }
+    
+    private void OnPlayerSpeedSettingChanged(float prev, float next, bool asServer)
+    {
+        if (asServer)
+        {
+            // На сервере применяем к всем игрокам
+            ApplyGameSettings();
+            Debug.Log($"[GameManager] PlayerSpeed setting updated on server: {next}");
+        }
+        else
+        {
+            // Применяем скорость к локальному игроку
+            ApplyGameSettings();
+            Debug.Log($"[GameManager] PlayerSpeed setting updated on client: {next}");
+        }
+    }
+    
+    private void OnProjectileSpeedSettingChanged(float prev, float next, bool asServer)
+    {
+        Debug.Log($"[GameManager] ProjectileSpeed setting changed: {prev} -> {next} (asServer: {asServer})");
+        // ProjectileSpeed применяется к новым снарядам при их создании
+        // Нет необходимости обновлять существующие снаряды
+    }
+    
+    private void OnDamageSettingChanged(int prev, int next, bool asServer)
+    {
+        Debug.Log($"[GameManager] Damage setting changed: {prev} -> {next} (asServer: {asServer})");
+        // Damage применяется при попадании снаряда
+        // Нет необходимости обновлять существующие снаряды
+    }
+    
     /// <summary>
     /// Применяет настройки из GameSettings к игрокам
     /// </summary>
     private void ApplyGameSettings()
     {
-        if (GameSettings.Instance == null) return;
+        if (GameSettings.Instance == null) 
+        {
+            Debug.LogWarning("[GameManager] Cannot apply settings - GameSettings.Instance is null!");
+            return;
+        }
+        
+        float playerSpeed = GameSettings.Instance.GetPlayerSpeed();
+        float gameTimeSetting = GameSettings.Instance.GetGameTime();
+        
+        Debug.Log($"[GameManager] Applying settings: PlayerSpeed={playerSpeed}, GameTime={gameTimeSetting}");
         
         var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
+        Debug.Log($"[GameManager] Found {players.Length} players to apply settings");
+        
         foreach (var player in players)
         {
-            player.moveSpeed = GameSettings.Instance.GetPlayerSpeed();
+            player.moveSpeed = playerSpeed;
+            Debug.Log($"[GameManager] Applied speed {playerSpeed} to player {player.name}");
+        }
+        
+        // Обновляем время игры
+        if (base.IsServerInitialized)
+        {
+            syncCurrentTime.Value = gameTimeSetting;
         }
         
         Debug.Log("[GameManager] Game settings applied to players");
@@ -285,17 +394,25 @@ public class GameManager : NetworkBehaviour
             LeaderboardManager.Instance.ClearAll();
         }
         
+        // Очищаем список спавненных игроков в NetworkManager
+        if (MyNetworkManager.Instance != null)
+        {
+            MyNetworkManager.Instance.ClearSpawnedPlayers();
+        }
+        
         // Сбрасываем состояние
         syncGameEnded.Value = false;
         syncTotalScore.Value = 0;
         syncCurrentTime.Value = gameTime;
         
-        // Сбрасываем очки игроков
-        var players = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
-        foreach (var player in players)
+        // Сбрасываем тотем
+        if (totem != null)
         {
-            player.ResetScore();
+            totem.ResetTotem();
         }
+        
+        // Переспавниваем всех игроков на новых позициях
+        RespawnAllPlayers();
         
         // Снова запускаем отсчёт
         if (countdownDisplay != null)
@@ -309,6 +426,109 @@ public class GameManager : NetworkBehaviour
         }
         
         Debug.Log("[GameManager] Game restarted!");
+    }
+    
+    /// <summary>
+    /// Переспавнивает всех игроков на случайных spawn point'ах
+    /// </summary>
+    private void RespawnAllPlayers()
+    {
+        var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
+        
+        // Создаём список занятых точек для этого цикла респавна
+        List<Transform> usedSpawnPoints = new List<Transform>();
+        
+        foreach (var player in players)
+        {
+            // Сбрасываем очки
+            var playerScore = player.GetComponent<PlayerScore>();
+            if (playerScore != null)
+            {
+                playerScore.ResetScore();
+            }
+            
+            // Сбрасываем здоровье
+            var healthSystem = player.GetComponent<HealthSystem>();
+            if (healthSystem != null)
+            {
+                healthSystem.ResetHealth();
+            }
+            
+            // Телепортируем на случайный spawn point
+            if (MyNetworkManager.Instance != null)
+            {
+                Transform spawnPoint = GetUniqueSpawnPoint(usedSpawnPoints);
+                if (spawnPoint != null)
+                {
+                    usedSpawnPoints.Add(spawnPoint);
+                    TeleportPlayer(player, spawnPoint.position, spawnPoint.rotation);
+                }
+            }
+        }
+        
+        Debug.Log($"[GameManager] Respawned {players.Length} players on unique spawn points");
+    }
+    
+    /// <summary>
+    /// Получает уникальную точку спавна, которую ещё не использовали в этом раунде
+    /// </summary>
+    private Transform GetUniqueSpawnPoint(List<Transform> usedPoints)
+    {
+        if (MyNetworkManager.Instance == null) return null;
+        
+        // Получаем все доступные точки
+        var allPoints = new List<Transform>();
+        for (int i = 0; i < 10; i++) // Пробуем 10 раз
+        {
+            var point = MyNetworkManager.Instance.GetRandomSpawnPoint();
+            if (point != null && !allPoints.Contains(point))
+            {
+                allPoints.Add(point);
+            }
+        }
+        
+        // Ищем неиспользованную точку
+        foreach (var point in allPoints)
+        {
+            if (!usedPoints.Contains(point))
+            {
+                return point;
+            }
+        }
+        
+        // Если все заняты, возвращаем любую
+        return allPoints.Count > 0 ? allPoints[0] : null;
+    }
+    
+    /// <summary>
+    /// Телепортирует игрока на новую позицию
+    /// </summary>
+    private void TeleportPlayer(NetworkPlayerController player, Vector3 position, Quaternion rotation)
+    {
+        // Отключаем CharacterController перед телепортацией
+        CharacterController cc = player.GetComponent<CharacterController>();
+        if (cc != null)
+        {
+            cc.enabled = false;
+            player.transform.position = position;
+            player.transform.rotation = rotation;
+            cc.enabled = true;
+        }
+        else
+        {
+            player.transform.position = position;
+            player.transform.rotation = rotation;
+        }
+        
+        // Сбрасываем скорость если есть Rigidbody
+        Rigidbody rb = player.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+        
+        Debug.Log($"[GameManager] Teleported player {player.name} to {position}");
     }
     
     public void QuitGame()

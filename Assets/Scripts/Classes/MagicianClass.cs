@@ -197,11 +197,18 @@ public class MagicianClass : NetworkBehaviour
         
         GameObject fireball = Instantiate(fireballPrefab, spawnPosition, finalRotation);
         
+        // Получаем скорость снаряда из настроек или используем дефолт
+        float projectileSpeed = fireballSpeed;
+        if (GameSettings.Instance != null)
+        {
+            projectileSpeed = GameSettings.Instance.GetProjectileSpeed();
+        }
+        
         FireballProjectile projectile = fireball.GetComponent<FireballProjectile>();
         if (projectile != null)
         {
             projectile.owner.Value = gameObject;
-            projectile.speed = fireballSpeed;
+            projectile.speed = projectileSpeed;
             projectile.rotationSpeed = fireballRotationSpeed;
             projectile.rotationAxis = fireballRotationAxis;
             projectile.targetPlayerId = targetPlayerId;
@@ -212,7 +219,7 @@ public class MagicianClass : NetworkBehaviour
         Rigidbody rb = fireball.GetComponent<Rigidbody>();
         if (rb != null)
         {
-            rb.linearVelocity = fireball.transform.forward * fireballSpeed;
+            rb.linearVelocity = fireball.transform.forward * projectileSpeed;
         }
         
         // Спавним на сервере - FishNet автоматически синхронизирует с клиентами

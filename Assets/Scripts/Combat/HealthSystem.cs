@@ -165,6 +165,17 @@ public class HealthSystem : NetworkBehaviour
         Respawn();
     }
 
+    /// <summary>
+    /// Сбрасывает здоровье игрока к максимуму (без телепортации)
+    /// </summary>
+    [Server]
+    public void ResetHealth()
+    {
+        currentHealth.Value = maxHealth;
+        lastDamageTime = 0f;
+        Debug.Log($"[HealthSystem] {gameObject.name} health reset to {maxHealth}");
+    }
+
     [Server]
     public void Respawn()
     {

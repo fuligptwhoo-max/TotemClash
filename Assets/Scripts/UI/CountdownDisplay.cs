@@ -67,7 +67,10 @@ public class CountdownDisplay : NetworkBehaviour
         
         if (next)
         {
+            // Сбрасываем состояние при начале отсчёта
             countdownFinished = false;
+            localCountdown = syncCountdown.Value > 0 ? syncCountdown.Value : countdownDuration;
+            UpdateDisplay();
             FreezeAllPlayers(true);
         }
         else if (!next && !countdownFinished)
@@ -115,8 +118,19 @@ public class CountdownDisplay : NetworkBehaviour
     [Server]
     public void StartCountdown()
     {
+        // Сбрасываем состояние перед новым отсчётом
+        localCountdown = countdownDuration;
+        countdownFinished = false;
+        
         syncCountdown.Value = countdownDuration;
         syncCountdownActive.Value = true;
+        
+        // Показываем панель если была скрыта
+        if (countdownPanel != null)
+            countdownPanel.SetActive(true);
+        
+        // Обновляем отображение сразу
+        UpdateDisplay();
         
         Debug.Log("[CountdownDisplay] Countdown started!");
         

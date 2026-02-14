@@ -63,12 +63,19 @@ public class FireballProjectile : NetworkBehaviour
         
         currentTargetPosition = initialTargetPosition;
         
+        // Применяем урон из настроек если доступно
+        if (base.IsServerInitialized && GameSettings.Instance != null)
+        {
+            damage = GameSettings.Instance.GetDamage();
+            Debug.Log($"[Fireball] Damage set from GameSettings: {damage}");
+        }
+        
         // Запускаем снаряд ТОЛЬКО на сервере (физика сервера авторитетна)
         if (rb != null && base.IsServerInitialized)
         {
             Vector3 direction = (currentTargetPosition - transform.position).normalized;
             rb.linearVelocity = direction * speed;
-            Debug.Log($"[Fireball] Launched! Speed: {speed}, Direction: {direction}");
+            Debug.Log($"[Fireball] Launched! Speed: {speed}, Damage: {damage}, Direction: {direction}");
         }
         
         if (base.IsServerInitialized)
@@ -112,7 +119,8 @@ public class FireballProjectile : NetworkBehaviour
     private void FixedUpdate()
     {
         // Коррекция траектории для автонаведения
-        if (!useDirectTarget && targetPlayerId != -1 && rb != null)
+        // Не меняем velocity если rigidbody kinematic (например, когда подобран тотем)
+        if (!useDirectTarget && targetPlayerId != -1 && rb != null && !rb.isKinematic)
         {
             Transform targetTransform = MagicianClass.GetPlayerTransform(targetPlayerId);
             if (targetTransform != null)

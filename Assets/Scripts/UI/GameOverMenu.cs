@@ -50,6 +50,9 @@ public class GameOverMenu : MonoBehaviour
         if (networkManager == null)
             networkManager = FindFirstObjectByType<NetworkManager>();
         
+        // Настраиваем Canvas для кликабельности
+        SetupCanvas();
+        
         if (playAgainButton != null)
             playAgainButton.onClick.AddListener(OnPlayAgain);
         
@@ -61,6 +64,8 @@ public class GameOverMenu : MonoBehaviour
         
         if (gameOverPanel != null)
             gameOverPanel.SetActive(false);
+            
+        Debug.Log("[GameOverMenu] Initialized");
     }
     
     private void OnDestroy()
@@ -71,12 +76,59 @@ public class GameOverMenu : MonoBehaviour
     }
     
     /// <summary>
+    /// Настраивает Canvas для работы UI
+    /// </summary>
+    private void SetupCanvas()
+    {
+        // Находим Canvas в иерархии
+        Canvas canvas = GetComponentInParent<Canvas>();
+        if (canvas == null)
+        {
+            canvas = FindFirstObjectByType<Canvas>();
+        }
+        
+        if (canvas != null)
+        {
+            // Добавляем GraphicRaycaster если нет
+            GraphicRaycaster raycaster = canvas.GetComponent<GraphicRaycaster>();
+            if (raycaster == null)
+            {
+                raycaster = canvas.gameObject.AddComponent<GraphicRaycaster>();
+                Debug.Log("[GameOverMenu] Added GraphicRaycaster to Canvas");
+            }
+            
+            // Устанавливаем высокий sort order чтобы быть поверх всего
+            canvas.sortingOrder = 200;
+            
+            // Убедимся что Canvas включен
+            canvas.enabled = true;
+            
+            Debug.Log($"[GameOverMenu] Canvas setup complete: SortOrder={canvas.sortingOrder}");
+        }
+        else
+        {
+            Debug.LogWarning("[GameOverMenu] Canvas not found in parent, but UI might still work if assigned in inspector.");
+        }
+        
+        // Проверяем наличие EventSystem
+        var eventSystem = FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>();
+        if (eventSystem == null)
+        {
+            Debug.LogWarning("[GameOverMenu] EventSystem not found in scene! If buttons don't work, add EventSystem via GameObject -> UI -> EventSystem");
+        }
+    }
+    
+    /// <summary>
     /// Показывает меню окончания игры с результатами
     /// </summary>
     public void ShowGameOver()
     {
         if (gameOverPanel != null)
+        {
             gameOverPanel.SetActive(true);
+            // Ставим на передний план
+            gameOverPanel.transform.SetAsLastSibling();
+        }
         
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
@@ -179,13 +231,21 @@ public class GameOverMenu : MonoBehaviour
     {
         Debug.Log("[GameOverMenu] Play Again clicked");
         
+        if (gameOverPanel != null)
+            gameOverPanel.SetActive(false);
+        
+        // Вызываем рестарт через GameManager
         if (GameManager.Instance != null)
         {
             GameManager.Instance.RestartGame();
         }
-        
-        if (gameOverPanel != null)
-            gameOverPanel.SetActive(false);
+        else
+        {
+            Debug.LogError("[GameOverMenu] GameManager.Instance is null!");
+            // Fallback: перезагружаем текущую сцену
+            UnityEngine.SceneManagement.SceneManager.LoadScene(
+                UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+        }
     }
     
     private void OnChangeCharacter()
@@ -202,14 +262,27 @@ public class GameOverMenu : MonoBehaviour
     {
         Debug.Log("[GameOverMenu] Quit to Menu clicked");
         
+        // Скрываем панель
+        if (gameOverPanel != null)
+            gameOverPanel.SetActive(false);
+        
+        // Очищаем списки игроков в MyNetworkManager
+        if (MyNetworkManager.Instance != null)
+        {
+            MyNetworkManager.Instance.ClearSpawnedPlayers();
+        }
+        
+        // Отключаем сеть и загружаем меню
         if (networkManager != null)
         {
+            // Останавливаем клиента и сервер
             if (networkManager.ClientManager.Started)
                 networkManager.ClientManager.StopConnection();
             if (networkManager.ServerManager.Started)
                 networkManager.ServerManager.StopConnection(true);
         }
         
+        // Загружаем сцену меню
         UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
     }
 }

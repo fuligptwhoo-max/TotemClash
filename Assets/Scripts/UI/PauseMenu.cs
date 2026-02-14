@@ -129,6 +129,22 @@ public class PauseMenu : MonoBehaviour
             
             // Устанавливаем высокий sort order
             canvas.sortingOrder = 100;
+            
+            // Убедимся что Canvas включен и в правильном режиме
+            canvas.enabled = true;
+            
+            Debug.Log($"[PauseMenu] Canvas setup complete: SortOrder={canvas.sortingOrder}, RenderMode={canvas.renderMode}");
+        }
+        else
+        {
+            Debug.LogWarning("[PauseMenu] Canvas not found in parent, but UI might still work if assigned in inspector.");
+        }
+        
+        // Проверяем наличие EventSystem
+        var eventSystem = FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>();
+        if (eventSystem == null)
+        {
+            Debug.LogWarning("[PauseMenu] EventSystem not found in scene! If buttons don't work, add EventSystem via GameObject -> UI -> EventSystem");
         }
     }
     
@@ -170,6 +186,8 @@ public class PauseMenu : MonoBehaviour
     
     public void Pause()
     {
+        if (isPaused) return; // Уже на паузе
+        
         isPaused = true;
         
         CheckIfHost();
@@ -185,11 +203,13 @@ public class PauseMenu : MonoBehaviour
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
         
-        Debug.Log("[PauseMenu] Game paused");
+        Debug.Log("[PauseMenu] Game paused, Time.timeScale = 0");
     }
     
     public void Resume()
     {
+        if (!isPaused) return; // Не на паузе
+        
         isPaused = false;
         
         HideAllPanels();
@@ -204,7 +224,7 @@ public class PauseMenu : MonoBehaviour
         Cursor.visible = false;
         Cursor.lockState = CursorLockMode.Confined;
         
-        Debug.Log("[PauseMenu] Game resumed");
+        Debug.Log("[PauseMenu] Game resumed, Time.timeScale = 1");
     }
     
     private void FreezeLocalPlayer(bool freeze)
@@ -245,6 +265,9 @@ public class PauseMenu : MonoBehaviour
             pausePanel.SetActive(true);
             // Ставим на передний план
             pausePanel.transform.SetAsLastSibling();
+            
+            // Убедимся что панель и все дочерние элементы активны
+            Debug.Log($"[PauseMenu] PausePanel active: {pausePanel.activeInHierarchy}");
         }
     }
     
@@ -314,8 +337,32 @@ public class PauseMenu : MonoBehaviour
     
     private void QuitToMenu()
     {
+        Debug.Log("[PauseMenu] QuitToMenu started");
+        
         Resume();
         
+        // Очищаем списки игроков в MyNetworkManager
+        if (MyNetworkManager.Instance != null)
+        {
+            MyNetworkManager.Instance.ClearSpawnedPlayers();
+        }
+        
+        // Уничтожаем всех игроков в сцене перед выходом
+        var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
+        foreach (var player in players)
+        {
+            var netObj = player.GetComponent<FishNet.Object.NetworkObject>();
+            if (netObj != null && netObj.IsOwner)
+            {
+                Debug.Log($"[PauseMenu] Despawning player: {player.name}");
+                if (networkManager != null && networkManager.IsServerStarted)
+                {
+                    networkManager.ServerManager.Despawn(netObj);
+                }
+            }
+        }
+        
+        // Отключаемся от сети
         if (networkManager != null)
         {
             if (networkManager.ClientManager.Started)
@@ -324,6 +371,17 @@ public class PauseMenu : MonoBehaviour
                 networkManager.ServerManager.StopConnection(true);
         }
         
+        // Загружаем сцену меню
+        StartCoroutine(LoadMainMenuAfterDelay());
+    }
+    
+    private System.Collections.IEnumerator LoadMainMenuAfterDelay()
+    {
+        // Ждём чтобы сеть отключилась
+        yield return new WaitForSeconds(0.5f);
+        
+        // Загружаем сцену меню
+        // GameManager и другие инстансы с DontDestroyOnLoad будут уничтожены при загрузке сцены
         UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
     }
     

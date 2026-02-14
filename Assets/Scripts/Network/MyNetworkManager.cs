@@ -27,6 +27,9 @@ public class MyNetworkManager : MonoBehaviour
     // Отслеживание спавненных игроков
     private HashSet<int> spawnedPlayers = new HashSet<int>();
     
+    // Очередь игроков ожидающих спавна (если подключились в MainMenu)
+    private List<NetworkConnection> pendingSpawnConnections = new List<NetworkConnection>();
+    
     private void Awake()
     {
         if (Instance == null)
@@ -37,11 +40,40 @@ public class MyNetworkManager : MonoBehaviour
             // Убедимся что мы DontDestroyOnLoad
             DontDestroyOnLoad(gameObject);
             Debug.Log("[MyNetworkManager] Instance created and marked DontDestroyOnLoad");
+            
+            // Подписываемся на смену сцены чтобы очищать спавн-поинты
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
         }
         else
         {
             Debug.LogWarning("[MyNetworkManager] Another instance exists, destroying this one");
             Destroy(gameObject);
+        }
+    }
+    
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
+        }
+    }
+    
+    /// <summary>
+    /// Вызывается при загрузке новой сцены
+    /// </summary>
+    private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+    {
+        Debug.Log($"[MyNetworkManager] Scene loaded: {scene.name}, clearing spawn points");
+        
+        // Очищаем спавн-поинты при загрузке новой сцены
+        // Они будут заново найдены при первом запросе
+        manualSpawnPoints.Clear();
+        
+        // Если мы в игровой сцене, сразу ищем спавн-поинты
+        if (scene.name != "MainMenu")
+        {
+            FindSpawnPointsInScene();
         }
     }
     
@@ -51,6 +83,7 @@ public class MyNetworkManager : MonoBehaviour
         {
             _networkManager.ServerManager.OnRemoteConnectionState += OnRemoteConnectionState;
             _networkManager.SceneManager.OnClientLoadedStartScenes += OnClientLoadedStartScenes;
+            _networkManager.SceneManager.OnLoadEnd += OnSceneLoadEnd;
             Debug.Log("[MyNetworkManager] Subscribed to network events");
         }
     }
@@ -66,8 +99,39 @@ public class MyNetworkManager : MonoBehaviour
             if (_networkManager.SceneManager != null)
             {
                 _networkManager.SceneManager.OnClientLoadedStartScenes -= OnClientLoadedStartScenes;
+                _networkManager.SceneManager.OnLoadEnd -= OnSceneLoadEnd;
             }
             Debug.Log("[MyNetworkManager] Unsubscribed from network events");
+        }
+    }
+    
+    /// <summary>
+    /// Вызывается когда сцена загружена (через FishNet SceneManager)
+    /// </summary>
+    private void OnSceneLoadEnd(SceneLoadEndEventArgs args)
+    {
+        if (!_networkManager.IsServerStarted) return;
+        
+        Debug.Log($"[MyNetworkManager] Scene load ended. Loaded scenes: {args.LoadedScenes.Length}");
+        
+        // Проверяем есть ли ожидающие спавна игроки
+        if (pendingSpawnConnections.Count > 0)
+        {
+            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            Debug.Log($"[MyNetworkManager] Processing {pendingSpawnConnections.Count} pending spawns in scene: {currentScene}");
+            
+            // Спавним всех ожидающих игроков
+            List<NetworkConnection> toSpawn = new List<NetworkConnection>(pendingSpawnConnections);
+            pendingSpawnConnections.Clear();
+            
+            foreach (var conn in toSpawn)
+            {
+                if (conn.IsValid && !spawnedPlayers.Contains(conn.ClientId))
+                {
+                    Debug.Log($"[MyNetworkManager] Spawning pending player: ClientId={conn.ClientId}");
+                    SpawnPlayer(conn);
+                }
+            }
         }
     }
     
@@ -81,6 +145,9 @@ public class MyNetworkManager : MonoBehaviour
                 spawnedPlayers.Remove(conn.ClientId);
             }
             
+            // Удаляем из очереди ожидания если есть
+            pendingSpawnConnections.Remove(conn);
+            
             if (conn.FirstObject != null)
             {
                 MagicianClass.UnregisterPlayer(conn.FirstObject.ObjectId);
@@ -92,7 +159,6 @@ public class MyNetworkManager : MonoBehaviour
         else if (args.ConnectionState == RemoteConnectionState.Started)
         {
             Debug.Log($"[MyNetworkManager] Player connected: ClientId={conn.ClientId}");
-            // НЕ спавним здесь! Ждём загрузки сцены через OnClientLoadedStartScenes
         }
     }
     
@@ -123,52 +189,23 @@ public class MyNetworkManager : MonoBehaviour
             return;
         }
         
-        // КРИТИЧНО: Не спавним игрока если мы всё ещё в MainMenu
-        // Ждём пока загрузится игровая сцена
+        // Проверяем текущую сцену
         string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        Debug.Log($"[MyNetworkManager] Current scene: {currentScene}");
+        
+        // Если в MainMenu - добавляем в очередь ожидания
         if (currentScene == "MainMenu")
         {
-            Debug.Log("[MyNetworkManager] Still in MainMenu, delaying player spawn until game scene loads...");
-            StartCoroutine(SpawnPlayerAfterSceneLoad(conn));
+            Debug.Log("[MyNetworkManager] In MainMenu, adding player to pending spawn queue");
+            if (!pendingSpawnConnections.Contains(conn))
+            {
+                pendingSpawnConnections.Add(conn);
+            }
             return;
         }
         
-        // Спавним игрока только если мы в игровой сцене
+        // Спавним игрока сразу если в игровой сцене
         SpawnPlayer(conn);
-    }
-    
-    /// <summary>
-    /// Корутина для спавна игрока после загрузки игровой сцены
-    /// </summary>
-    private System.Collections.IEnumerator SpawnPlayerAfterSceneLoad(NetworkConnection conn)
-    {
-        // Ждём пока сцена изменится с MainMenu на игровую
-        float timeout = 10f;
-        float elapsed = 0f;
-        
-        while (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "MainMenu" && elapsed < timeout)
-        {
-            elapsed += Time.deltaTime;
-            yield return null;
-        }
-        
-        string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-        if (currentScene == "MainMenu")
-        {
-            Debug.LogError("[MyNetworkManager] Timeout waiting for scene to load!");
-            yield break;
-        }
-        
-        // Даём немного времени на инициализацию сцены
-        yield return new WaitForSeconds(0.5f);
-        
-        Debug.Log($"[MyNetworkManager] Scene loaded: {currentScene}, now spawning player...");
-        
-        // Проверяем ещё раз что игрок ещё не спавнен
-        if (!spawnedPlayers.Contains(conn.ClientId) && conn.IsValid)
-        {
-            SpawnPlayer(conn);
-        }
     }
     
     /// <summary>
@@ -191,9 +228,16 @@ public class MyNetworkManager : MonoBehaviour
         // Помечаем что мы спавним этого игрока
         spawnedPlayers.Add(conn.ClientId);
         
-        Transform spawnPoint = GetRandomSpawnPoint();
+        // Получаем точку спавна с проверкой занятости
+        Transform spawnPoint = GetRandomSpawnPoint(conn);
         Vector3 spawnPosition = spawnPoint != null ? spawnPoint.position : Vector3.zero;
         Quaternion spawnRotation = spawnPoint != null ? spawnPoint.rotation : Quaternion.identity;
+        
+        // Если нет точки спавна, используем случайную позицию с запасом
+        if (spawnPoint == null)
+        {
+            spawnPosition = new Vector3(Random.Range(-10f, 10f), 2f, Random.Range(-10f, 10f));
+        }
         
         Debug.Log($"[MyNetworkManager] Spawning player for ClientId={conn.ClientId} at position {spawnPosition}");
         
@@ -217,6 +261,27 @@ public class MyNetworkManager : MonoBehaviour
         {
             Debug.LogError($"[MyNetworkManager] Exception while spawning player: {e.Message}");
             spawnedPlayers.Remove(conn.ClientId);
+        }
+    }
+    
+    /// <summary>
+    /// Принудительно спавнит всех ожидающих игроков (вызывается при старте игры)
+    /// </summary>
+    public void SpawnPendingPlayers()
+    {
+        if (!_networkManager.IsServerStarted) return;
+        
+        Debug.Log($"[MyNetworkManager] Force spawning {pendingSpawnConnections.Count} pending players");
+        
+        List<NetworkConnection> toSpawn = new List<NetworkConnection>(pendingSpawnConnections);
+        pendingSpawnConnections.Clear();
+        
+        foreach (var conn in toSpawn)
+        {
+            if (conn.IsValid && !spawnedPlayers.Contains(conn.ClientId))
+            {
+                SpawnPlayer(conn);
+            }
         }
     }
     
@@ -261,8 +326,12 @@ public class MyNetworkManager : MonoBehaviour
             }
         }
         
-        // Очищаем список спавненных игроков
+        // Очищаем списки
         spawnedPlayers.Clear();
+        pendingSpawnConnections.Clear();
+        
+        // Очищаем спавн-поинты - они будут заново найдены в текущей сцене
+        manualSpawnPoints.Clear();
         
         InitializeSpawnPoints();
         
@@ -300,6 +369,17 @@ public class MyNetworkManager : MonoBehaviour
     
     public Transform GetRandomSpawnPoint()
     {
+        return GetRandomSpawnPoint(null);
+    }
+    
+    /// <summary>
+    /// Получает случайную точку спавна, избегая близости к другим игрокам
+    /// </summary>
+    public Transform GetRandomSpawnPoint(NetworkConnection spawningPlayer)
+    {
+        // Очищаем null-ссылки (уничтоженные объекты)
+        manualSpawnPoints.RemoveAll(t => t == null);
+        
         if (manualSpawnPoints.Count == 0)
         {
             FindSpawnPointsInScene();
@@ -311,8 +391,50 @@ public class MyNetworkManager : MonoBehaviour
             return null;
         }
         
-        int randomIndex = Random.Range(0, manualSpawnPoints.Count);
-        return manualSpawnPoints[randomIndex];
+        // Создаём список доступных точек
+        List<Transform> availablePoints = new List<Transform>(manualSpawnPoints);
+        
+        // Если есть игроки в сцене, проверяем расстояние
+        var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
+        float minDistance = 3f; // Минимальное расстояние между игроками
+        
+        foreach (var point in manualSpawnPoints)
+        {
+            if (point == null) continue;
+            
+            // Проверяем есть ли игрок рядом с этой точкой
+            bool tooClose = false;
+            foreach (var player in players)
+            {
+                // Пропускаем самого спавнящегося игрока
+                if (spawningPlayer != null && player.Owner == spawningPlayer) continue;
+                
+                float distance = Vector3.Distance(point.position, player.transform.position);
+                if (distance < minDistance)
+                {
+                    tooClose = true;
+                    break;
+                }
+            }
+            
+            if (tooClose)
+            {
+                availablePoints.Remove(point);
+            }
+        }
+        
+        // Если остались доступные точки, выбираем из них
+        if (availablePoints.Count > 0)
+        {
+            int randomIndex = Random.Range(0, availablePoints.Count);
+            Debug.Log($"[MyNetworkManager] Selected spawn point {randomIndex} from {availablePoints.Count} available points");
+            return availablePoints[randomIndex];
+        }
+        
+        // Если все точки заняты, выбираем любую (но логируем)
+        Debug.LogWarning("[MyNetworkManager] All spawn points have players nearby, using random point");
+        int fallbackIndex = Random.Range(0, manualSpawnPoints.Count);
+        return manualSpawnPoints[fallbackIndex];
     }
     
     private void FindSpawnPointsInScene()
@@ -371,5 +493,15 @@ public class MyNetworkManager : MonoBehaviour
             sld.ReplaceScenes = ReplaceOption.All;
             _networkManager.SceneManager.LoadGlobalScenes(sld);
         }
+    }
+    
+    /// <summary>
+    /// Очищает список спавненных игроков (вызывается при рестарте игры)
+    /// </summary>
+    public void ClearSpawnedPlayers()
+    {
+        spawnedPlayers.Clear();
+        pendingSpawnConnections.Clear();
+        Debug.Log("[MyNetworkManager] Spawned players list cleared");
     }
 }

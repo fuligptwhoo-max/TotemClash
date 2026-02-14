@@ -19,7 +19,6 @@ public class LocalScoreDisplay : MonoBehaviour
     
     private PlayerScore localPlayerScore;
     private int lastScore = -1;
-    private bool searchStarted = false;
     
     private void Start()
     {

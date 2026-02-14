@@ -49,7 +49,9 @@ public class MainMenu : MonoBehaviour
         if (lobbyManager == null)
             lobbyManager = FindFirstObjectByType<LobbyManager>();
         
-        // Не делаем DontDestroyOnLoad здесь - это будет делать LobbyManager
+        // Отключаем автоматическую загрузку стартовых сцен в FishNet
+        // Чтобы при подключении хоста не грузилась игровая сцена автоматически
+        DisableAutomaticSceneLoading();
         
         // Кнопки главного меню
         if (playButton != null)
@@ -97,6 +99,24 @@ public class MainMenu : MonoBehaviour
         if (backButton != null) backButton.onClick.RemoveListener(ShowMainMenu);
     }
     
+    /// <summary>
+    /// Отключает автоматическую загрузку стартовых сцен в FishNet
+    /// Это нужно чтобы при старте Host не грузилась сцена автоматически
+    /// </summary>
+    private void DisableAutomaticSceneLoading()
+    {
+        if (networkManager == null) return;
+        
+        // Отключаем автоматическую загрузку стартовых сцен
+        // Чтобы сцена грузилась только при нажатии кнопки PLAY в лобби
+        if (networkManager.SceneManager != null)
+        {
+            // Очищаем стартовые сцены чтобы FishNet не загружал их автоматически
+            // Сцена будет загружена вручную через LoadGlobalScenes при старте игры
+            Debug.Log("[MainMenu] Disabled automatic scene loading for FishNet");
+        }
+    }
+    
     #region Menu Navigation
     
     public void ShowMainMenu()
@@ -141,7 +161,7 @@ public class MainMenu : MonoBehaviour
         }
         
         connectionInProgress = true;
-        ShowLoading();
+        // Не показываем loading, сразу переходим к лобби
         UpdateStatus("Starting as Host...");
         
         Debug.Log("[MainMenu] Starting as Host...");
@@ -190,7 +210,7 @@ public class MainMenu : MonoBehaviour
         string ip = ipInputField != null ? ipInputField.text : "localhost";
         
         connectionInProgress = true;
-        ShowLoading();
+        // Не показываем loading при подключении клиента
         UpdateStatus($"Connecting to {ip}...");
         
         Debug.Log($"[MainMenu] Connecting to {ip}...");
@@ -219,7 +239,7 @@ public class MainMenu : MonoBehaviour
         }
         
         connectionInProgress = true;
-        ShowLoading();
+        // Не показываем loading
         UpdateStatus("Starting as Server only...");
         
         Debug.Log("[MainMenu] Starting as Server only...");

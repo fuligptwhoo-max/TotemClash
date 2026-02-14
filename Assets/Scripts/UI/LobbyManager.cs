@@ -68,6 +68,41 @@ public class LobbyManager : MonoBehaviour
         if (networkManager == null)
             networkManager = FindFirstObjectByType<NetworkManager>();
         
+        // Автопоиск loadingPanel если не назначен
+        if (loadingPanel == null)
+        {
+            // Ищем по имени (обычно LoadingPanel или Loading)
+            GameObject found = GameObject.Find("LoadingPanel");
+            if (found == null)
+                found = GameObject.Find("Loading");
+            if (found == null)
+                found = GameObject.Find("Loading Screen");
+            
+            if (found != null)
+            {
+                loadingPanel = found;
+                Debug.Log($"[LobbyManager] Auto-found loadingPanel: {found.name}");
+            }
+            else
+            {
+                Debug.LogWarning("[LobbyManager] loadingPanel not assigned and could not be found automatically!");
+            }
+        }
+        
+        // Автопоиск networkMenuPanel если не назначен
+        if (networkMenuPanel == null)
+        {
+            GameObject found = GameObject.Find("NetworkMenuPanel");
+            if (found == null)
+                found = GameObject.Find("Network Menu");
+            
+            if (found != null)
+            {
+                networkMenuPanel = found;
+                Debug.Log($"[LobbyManager] Auto-found networkMenuPanel: {found.name}");
+            }
+        }
+        
         // Кнопки лобби
         if (startGameButton != null)
             startGameButton.onClick.AddListener(OnStartGameClicked);
@@ -91,6 +126,31 @@ public class LobbyManager : MonoBehaviour
         // Изначально скрываем лобби и настройки
         if (lobbyPanel != null) lobbyPanel.SetActive(false);
         if (settingsPanel != null) settingsPanel.SetActive(false);
+        
+        // Проверяем назначены ли слайдеры и тексты
+        ValidateSettingsUI();
+        
+        Debug.Log("[LobbyManager] Started");
+    }
+    
+    private void ValidateSettingsUI()
+    {
+        Debug.Log("[LobbyManager] Validating Settings UI...");
+        
+        if (gameTimeSlider == null) Debug.LogError("[LobbyManager] gameTimeSlider is NOT assigned!");
+        else Debug.Log($"[LobbyManager] gameTimeSlider assigned: {gameTimeSlider.name}, min={gameTimeSlider.minValue}, max={gameTimeSlider.maxValue}, value={gameTimeSlider.value}");
+        
+        if (gameTimeValue == null) Debug.LogError("[LobbyManager] gameTimeValue is NOT assigned!");
+        else Debug.Log($"[LobbyManager] gameTimeValue assigned: {gameTimeValue.name}, text={gameTimeValue.text}");
+        
+        if (playerSpeedSlider == null) Debug.LogError("[LobbyManager] playerSpeedSlider is NOT assigned!");
+        if (playerSpeedValue == null) Debug.LogError("[LobbyManager] playerSpeedValue is NOT assigned!");
+        
+        if (projectileSpeedSlider == null) Debug.LogError("[LobbyManager] projectileSpeedSlider is NOT assigned!");
+        if (projectileSpeedValue == null) Debug.LogError("[LobbyManager] projectileSpeedValue is NOT assigned!");
+        
+        if (damageSlider == null) Debug.LogError("[LobbyManager] damageSlider is NOT assigned!");
+        if (damageValue == null) Debug.LogError("[LobbyManager] damageValue is NOT assigned!");
     }
     
     private void OnDestroy()
@@ -112,15 +172,19 @@ public class LobbyManager : MonoBehaviour
     
     private void SetupSettingsSliders()
     {
+        // Отписываемся от старых событий
         if (gameTimeSlider != null)
         {
+            gameTimeSlider.onValueChanged.RemoveAllListeners();
             gameTimeSlider.minValue = 60f;
             gameTimeSlider.maxValue = 600f;
+            gameTimeSlider.wholeNumbers = true;
             gameTimeSlider.onValueChanged.AddListener(OnGameTimeChanged);
         }
         
         if (playerSpeedSlider != null)
         {
+            playerSpeedSlider.onValueChanged.RemoveAllListeners();
             playerSpeedSlider.minValue = 4f;
             playerSpeedSlider.maxValue = 15f;
             playerSpeedSlider.onValueChanged.AddListener(OnPlayerSpeedChanged);
@@ -128,6 +192,7 @@ public class LobbyManager : MonoBehaviour
         
         if (projectileSpeedSlider != null)
         {
+            projectileSpeedSlider.onValueChanged.RemoveAllListeners();
             projectileSpeedSlider.minValue = 10f;
             projectileSpeedSlider.maxValue = 40f;
             projectileSpeedSlider.onValueChanged.AddListener(OnProjectileSpeedChanged);
@@ -135,10 +200,14 @@ public class LobbyManager : MonoBehaviour
         
         if (damageSlider != null)
         {
+            damageSlider.onValueChanged.RemoveAllListeners();
             damageSlider.minValue = 10f;
             damageSlider.maxValue = 100f;
+            damageSlider.wholeNumbers = true;
             damageSlider.onValueChanged.AddListener(OnDamageChanged);
         }
+        
+        Debug.Log("[LobbyManager] Settings sliders setup complete");
     }
     
     /// <summary>
@@ -149,18 +218,33 @@ public class LobbyManager : MonoBehaviour
         isHost = asHost;
         isInSettings = false;
         
-        Debug.Log("[LobbyManager] ShowLobby called");
+        Debug.Log($"[LobbyManager] ShowLobby called, isHost={isHost}");
+        Debug.Log($"[LobbyManager] loadingPanel reference: {(loadingPanel != null ? loadingPanel.name : "NULL")}");
+        Debug.Log($"[LobbyManager] networkMenuPanel reference: {(networkMenuPanel != null ? networkMenuPanel.name : "NULL")}");
         
         // Скрываем загрузку и меню
         if (loadingPanel != null)
+        {
             loadingPanel.SetActive(false);
+            Debug.Log("[LobbyManager] Loading panel hidden");
+        }
+        else
+        {
+            Debug.LogWarning("[LobbyManager] Cannot hide loadingPanel - reference is NULL!");
+        }
         
         if (networkMenuPanel != null)
+        {
             networkMenuPanel.SetActive(false);
+            Debug.Log("[LobbyManager] Network menu hidden");
+        }
         
         // Показываем лобби
         if (lobbyPanel != null)
+        {
             lobbyPanel.SetActive(true);
+            Debug.Log("[LobbyManager] Lobby panel shown");
+        }
         
         // Скрываем настройки
         if (settingsPanel != null)
@@ -183,10 +267,34 @@ public class LobbyManager : MonoBehaviour
         // Обновляем список игроков
         UpdatePlayersList();
         
-        // Обновляем UI настроек
-        UpdateSettingsUI();
+        // Обновляем UI настроек (с задержкой чтобы GameSettings успел инициализироваться)
+        StartCoroutine(UpdateSettingsUIDelayed());
         
         Debug.Log($"[LobbyManager] Lobby shown as {(isHost ? "Host" : "Client")}");
+    }
+    
+    private System.Collections.IEnumerator UpdateSettingsUIDelayed()
+    {
+        // Ждём пока GameSettings инициализируется
+        yield return null;
+        
+        // Пробуем несколько раз
+        int attempts = 0;
+        while (GameSettings.Instance == null && attempts < 10)
+        {
+            yield return null;
+            attempts++;
+        }
+        
+        if (GameSettings.Instance != null)
+        {
+            Debug.Log($"[LobbyManager] GameSettings found after {attempts} attempts");
+            UpdateSettingsUI();
+        }
+        else
+        {
+            Debug.LogError("[LobbyManager] GameSettings.Instance is still null after waiting!");
+        }
     }
     
     private void OnSettingsClicked()
@@ -227,49 +335,122 @@ public class LobbyManager : MonoBehaviour
     
     private void UpdateSettingsUI()
     {
+        Debug.Log("[LobbyManager] UpdateSettingsUI called");
+        
         if (GameSettings.Instance == null) 
         {
-            Debug.LogWarning("[LobbyManager] GameSettings.Instance is null!");
+            Debug.LogError("[LobbyManager] GameSettings.Instance is null! Убедись что GameSettings добавлен в сцену MainMenu на активный объект с NetworkObject компонентом.");
             return;
         }
         
-        Debug.Log($"[LobbyManager] Updating settings UI: Time={GameSettings.Instance.GetGameTime()}");
+        Debug.Log($"[LobbyManager] GameSettings.Instance found! IsServerInitialized={GameSettings.Instance.IsServerInitialized}");
+        Debug.Log($"[LobbyManager] Current GameSettings values: Time={GameSettings.Instance.GetGameTime()}, Speed={GameSettings.Instance.GetPlayerSpeed()}, Projectile={GameSettings.Instance.GetProjectileSpeed()}, Damage={GameSettings.Instance.GetDamage()}");
         
+        // Отписываемся от событий временно чтобы не вызывать изменения при установке значений
         if (gameTimeSlider != null)
-            gameTimeSlider.value = GameSettings.Instance.GetGameTime();
+        {
+            gameTimeSlider.onValueChanged.RemoveAllListeners();
+            float newValue = GameSettings.Instance.GetGameTime();
+            gameTimeSlider.value = newValue;
+            gameTimeSlider.onValueChanged.AddListener(OnGameTimeChanged);
+            Debug.Log($"[LobbyManager] Set gameTimeSlider.value = {newValue}, actual={gameTimeSlider.value}");
+        }
+        else
+        {
+            Debug.LogError("[LobbyManager] gameTimeSlider is null in UpdateSettingsUI!");
+        }
         
         if (playerSpeedSlider != null)
+        {
+            playerSpeedSlider.onValueChanged.RemoveAllListeners();
             playerSpeedSlider.value = GameSettings.Instance.GetPlayerSpeed();
+            playerSpeedSlider.onValueChanged.AddListener(OnPlayerSpeedChanged);
+        }
         
         if (projectileSpeedSlider != null)
+        {
+            projectileSpeedSlider.onValueChanged.RemoveAllListeners();
             projectileSpeedSlider.value = GameSettings.Instance.GetProjectileSpeed();
+            projectileSpeedSlider.onValueChanged.AddListener(OnProjectileSpeedChanged);
+        }
         
         if (damageSlider != null)
+        {
+            damageSlider.onValueChanged.RemoveAllListeners();
             damageSlider.value = GameSettings.Instance.GetDamage();
+            damageSlider.onValueChanged.AddListener(OnDamageChanged);
+        }
         
         UpdateSettingsText();
     }
     
     private void UpdateSettingsText()
     {
+        Debug.Log("[LobbyManager] Updating settings text...");
+        
         if (gameTimeValue != null && gameTimeSlider != null)
-            gameTimeValue.text = $"{gameTimeSlider.value:F0} сек";
+        {
+            string newText = $"{gameTimeSlider.value:F0} сек";
+            gameTimeValue.text = newText;
+            Debug.Log($"[LobbyManager] gameTimeValue.text set to: {newText}");
+        }
+        else
+        {
+            Debug.LogWarning($"[LobbyManager] Cannot update gameTimeValue: value={(gameTimeValue != null)}, slider={(gameTimeSlider != null)}");
+        }
         
         if (playerSpeedValue != null && playerSpeedSlider != null)
-            playerSpeedValue.text = $"{playerSpeedSlider.value:F1}";
+        {
+            string newText = $"{playerSpeedSlider.value:F1}";
+            playerSpeedValue.text = newText;
+            Debug.Log($"[LobbyManager] playerSpeedValue.text = {newText}");
+        }
+        else
+        {
+            Debug.LogWarning($"[LobbyManager] Cannot update playerSpeedValue: value={(playerSpeedValue != null)}, slider={(playerSpeedSlider != null)}");
+        }
         
         if (projectileSpeedValue != null && projectileSpeedSlider != null)
-            projectileSpeedValue.text = $"{projectileSpeedSlider.value:F1}";
+        {
+            string newText = $"{projectileSpeedSlider.value:F1}";
+            projectileSpeedValue.text = newText;
+            Debug.Log($"[LobbyManager] projectileSpeedValue.text = {newText}");
+        }
+        else
+        {
+            Debug.LogWarning($"[LobbyManager] Cannot update projectileSpeedValue: value={(projectileSpeedValue != null)}, slider={(projectileSpeedSlider != null)}");
+        }
         
         if (damageValue != null && damageSlider != null)
-            damageValue.text = $"{damageSlider.value:F0}";
+        {
+            string newText = $"{damageSlider.value:F0}";
+            damageValue.text = newText;
+            Debug.Log($"[LobbyManager] damageValue.text = {newText}");
+        }
+        else
+        {
+            Debug.LogWarning($"[LobbyManager] Cannot update damageValue: value={(damageValue != null)}, slider={(damageSlider != null)}");
+        }
     }
     
     #region Settings Handlers
     
     private void OnGameTimeChanged(float value)
     {
-        if (!isHost || GameSettings.Instance == null) return;
+        Debug.Log($"[LobbyManager] OnGameTimeChanged: {value}, isHost={isHost}, GameSettings.Instance={GameSettings.Instance != null}");
+        
+        if (!isHost) 
+        {
+            Debug.LogWarning("[LobbyManager] Cannot change settings - not host!");
+            return;
+        }
+        
+        if (GameSettings.Instance == null) 
+        {
+            Debug.LogError("[LobbyManager] GameSettings.Instance is null!");
+            return;
+        }
+        
         GameSettings.Instance.SetGameTime(value);
         UpdateSettingsText();
     }

@@ -5,7 +5,7 @@ using FishNet.Object.Synchronizing;
 /// <summary>
 /// Глобальные настройки игры - синхронизируются между всеми игроками
 /// Только хост может менять настройки
-/// Настройки сохраняются при перезапуске игры (играть снова)
+/// Сохраняется между сценами (DontDestroyOnLoad)
 /// </summary>
 public class GameSettings : NetworkBehaviour
 {
@@ -23,7 +23,7 @@ public class GameSettings : NetworkBehaviour
     [SerializeField] private float defaultProjectileSpeed = 20f;
     [SerializeField] private int defaultDamage = 25;
     
-    // Статические переменные для сохранения между перезапусками
+    // Статические переменные для сохранения между перезапусками игры (не сцен!)
     private static float savedGameTime = -1f;
     private static float savedPlayerSpeed = -1f;
     private static float savedProjectileSpeed = -1f;
@@ -35,9 +35,13 @@ public class GameSettings : NetworkBehaviour
         if (Instance == null)
         {
             Instance = this;
+            // Не делаем DontDestroyOnLoad здесь - это вызовет проблемы с NetworkObject
+            // Вместо этого используем статические переменные для сохранения настроек
+            Debug.Log("[GameSettings] Instance set");
         }
         else
         {
+            Debug.LogWarning("[GameSettings] Another instance exists, destroying this one");
             Destroy(gameObject);
         }
     }
@@ -45,6 +49,8 @@ public class GameSettings : NetworkBehaviour
     public override void OnStartNetwork()
     {
         base.OnStartNetwork();
+        
+        Debug.Log($"[GameSettings] OnStartNetwork - IsServerInitialized: {base.IsServerInitialized}, IsClientInitialized: {base.IsClientInitialized}");
         
         // Только сервер инициализирует значения
         if (base.IsServerInitialized)
@@ -68,6 +74,42 @@ public class GameSettings : NetworkBehaviour
                 Debug.Log("[GameSettings] Using default settings (no saved settings found)");
             }
         }
+        
+        // Подписываемся на изменения
+        GameTime.OnChange += OnGameTimeChanged;
+        PlayerSpeed.OnChange += OnPlayerSpeedChanged;
+        ProjectileSpeed.OnChange += OnProjectileSpeedChanged;
+        DamagePerHit.OnChange += OnDamageChanged;
+    }
+    
+    public override void OnStopNetwork()
+    {
+        base.OnStopNetwork();
+        
+        GameTime.OnChange -= OnGameTimeChanged;
+        PlayerSpeed.OnChange -= OnPlayerSpeedChanged;
+        ProjectileSpeed.OnChange -= OnProjectileSpeedChanged;
+        DamagePerHit.OnChange -= OnDamageChanged;
+    }
+    
+    private void OnGameTimeChanged(float prev, float next, bool asServer)
+    {
+        Debug.Log($"[GameSettings] GameTime changed: {prev} -> {next} (asServer: {asServer})");
+    }
+    
+    private void OnPlayerSpeedChanged(float prev, float next, bool asServer)
+    {
+        Debug.Log($"[GameSettings] PlayerSpeed changed: {prev} -> {next} (asServer: {asServer})");
+    }
+    
+    private void OnProjectileSpeedChanged(float prev, float next, bool asServer)
+    {
+        Debug.Log($"[GameSettings] ProjectileSpeed changed: {prev} -> {next} (asServer: {asServer})");
+    }
+    
+    private void OnDamageChanged(int prev, int next, bool asServer)
+    {
+        Debug.Log($"[GameSettings] Damage changed: {prev} -> {next} (asServer: {asServer})");
     }
     
     /// <summary>
@@ -87,9 +129,14 @@ public class GameSettings : NetworkBehaviour
     /// <summary>
     /// Сброс настроек к значениям по умолчанию (только сервер)
     /// </summary>
-    [Server]
     public void ResetToDefaults()
     {
+        if (!base.IsServerInitialized)
+        {
+            Debug.LogWarning("[GameSettings] ResetToDefaults called but not server!");
+            return;
+        }
+        
         GameTime.Value = defaultGameTime;
         PlayerSpeed.Value = defaultPlayerSpeed;
         ProjectileSpeed.Value = defaultProjectileSpeed;
@@ -107,36 +154,58 @@ public class GameSettings : NetworkBehaviour
     
     #region Setters (только для сервера/хоста)
     
-    [Server]
     public void SetGameTime(float value)
     {
+        Debug.Log($"[GameSettings] SetGameTime called with {value}, IsServerInitialized={base.IsServerInitialized}");
+        
+        if (!base.IsServerInitialized)
+        {
+            Debug.LogWarning($"[GameSettings] SetGameTime({value}) called but IsServerInitialized={base.IsServerInitialized}");
+            return;
+        }
+        
         float newValue = Mathf.Clamp(value, 60f, 600f);
         GameTime.Value = newValue;
         SaveSettings();
         Debug.Log($"[GameSettings] GameTime set to: {newValue}");
     }
     
-    [Server]
     public void SetPlayerSpeed(float value)
     {
+        if (!base.IsServerInitialized)
+        {
+            Debug.LogWarning($"[GameSettings] SetPlayerSpeed({value}) called but IsServerInitialized={base.IsServerInitialized}");
+            return;
+        }
+        
         float newValue = Mathf.Clamp(value, 4f, 15f);
         PlayerSpeed.Value = newValue;
         SaveSettings();
         Debug.Log($"[GameSettings] PlayerSpeed set to: {newValue}");
     }
     
-    [Server]
     public void SetProjectileSpeed(float value)
     {
+        if (!base.IsServerInitialized)
+        {
+            Debug.LogWarning($"[GameSettings] SetProjectileSpeed({value}) called but IsServerInitialized={base.IsServerInitialized}");
+            return;
+        }
+        
         float newValue = Mathf.Clamp(value, 10f, 40f);
         ProjectileSpeed.Value = newValue;
         SaveSettings();
         Debug.Log($"[GameSettings] ProjectileSpeed set to: {newValue}");
     }
     
-    [Server]
     public void SetDamage(int value)
     {
+        if (!base.IsServerInitialized)
+        {
+            Debug.LogWarning($"[GameSettings] SetDamage({value}) called but IsServerInitialized={base.IsServerInitialized}");
+            return;
+        }
+        
         int newValue = Mathf.Clamp(value, 10, 100);
         DamagePerHit.Value = newValue;
         SaveSettings();
@@ -153,4 +222,13 @@ public class GameSettings : NetworkBehaviour
     public int GetDamage() => DamagePerHit.Value;
     
     #endregion
+    
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+            Debug.Log("[GameSettings] Instance cleared - settings saved in static variables");
+        }
+    }
 }

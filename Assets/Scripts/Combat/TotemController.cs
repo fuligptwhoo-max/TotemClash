@@ -247,4 +247,33 @@ public class TotemController : NetworkBehaviour
         return closest;
     }
     
+    /// <summary>
+    /// Сбрасывает тотем в начальное состояние (вызывается при рестарте игры)
+    /// </summary>
+    [Server]
+    public void ResetTotem()
+    {
+        // Сбрасываем носителя
+        currentCarrierId.Value = 0;
+        isBeingCarriedSync.Value = false;
+        carryTime = 0f;
+        currentMultiplier = 1f;
+        currentCarrierObject = null;
+        
+        // Включаем физику
+        if (rb != null)
+        {
+            rb.isKinematic = false;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+        
+        if (totemCollider != null)
+        {
+            totemCollider.enabled = true;
+        }
+        
+        Debug.Log("[TotemController] Totem reset to default state");
+    }
+    
 }
