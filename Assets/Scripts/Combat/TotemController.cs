@@ -1,279 +1,368 @@
-using UnityEngine;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
 using System.Collections.Generic;
+using UnityEngine;
 
-public class TotemController : NetworkBehaviour
+namespace TotemClash.Combat
 {
-    [Header("Totem Settings")]
-    public float pickUpRange = 2f;
-    public float dropForce = 5f;
-    
-    [Header("Scoring")]
-    public float scoreMultiplierIncrease = 0.1f;
-    public float maxMultiplier = 3f;
-    
-    // FishNet 4.x SyncVar
-    public readonly SyncVar<int> currentCarrierId = new SyncVar<int>(0);
-    public readonly SyncVar<bool> isBeingCarriedSync = new SyncVar<bool>(false);
-    
-    // Локальные состояния
-    private float carryTime = 0f;
-    private float currentMultiplier = 1f;
-    
-    // Компоненты
-    private Rigidbody rb;
-    private Collider totemCollider;
-    private GameObject currentCarrierObject;
-    
-    // Статический список всех тотемов
-    private static List<TotemController> allTotems = new List<TotemController>();
-    
-    public override void OnStartNetwork()
+    /// <summary>
+    /// Local (non-networked) totem controller for single-player mode.
+    /// Manages totem pickup, carrying, dropping, and score multiplier.
+    /// </summary>
+    public class TotemController : MonoBehaviour
     {
-        base.OnStartNetwork();
-        
-        rb = GetComponent<Rigidbody>();
-        totemCollider = GetComponent<Collider>();
-        
-        // Подписываемся на изменения
-        currentCarrierId.OnChange += OnCarrierChanged;
-    }
-    
-    public override void OnStopNetwork()
-    {
-        base.OnStopNetwork();
-        currentCarrierId.OnChange -= OnCarrierChanged;
-        allTotems.Remove(this);
-    }
-    
-    private void OnEnable()
-    {
-        // Добавляем в список
-        if (!allTotems.Contains(this))
-            allTotems.Add(this);
-    }
-    
-    private void OnDisable()
-    {
-        allTotems.Remove(this);
-    }
-    
-    private void Update()
-    {
-        if (base.IsServerInitialized && isBeingCarriedSync.Value)
+        [Header("Pickup Settings")]
+        [Tooltip("Range within which the totem can be picked up")]
+        [SerializeField] private float pickUpRange = 2f;
+
+        [Header("Drop Settings")]
+        [Tooltip("Force applied when dropping the totem")]
+        [SerializeField] private float dropForce = 5f;
+
+        [Header("Score Settings")]
+        [Tooltip("How much the multiplier increases per second while carried")]
+        [SerializeField] private float scoreMultiplierIncrease = 0.1f;
+
+        [Tooltip("Maximum score multiplier cap")]
+        [SerializeField] private float maxMultiplier = 3f;
+
+        [Header("Visual Settings")]
+        [Tooltip("Height offset when carried")]
+        [SerializeField] private float carryHeightOffset = 1.5f;
+
+        [Tooltip("Smooth follow speed when carried")]
+        [SerializeField] private float smoothFollowSpeed = 10f;
+
+        [Tooltip("Rotation speed when carried")]
+        [SerializeField] private float rotationSpeed = 180f;
+
+        // Internal state
+        private GameObject currentCarrier;
+        private bool isBeingCarried;
+        private float carryTime;
+        private float currentMultiplier;
+
+        // Static registry for finding closest totem
+        private static readonly List<TotemController> allTotems = new();
+
+        // Cached references
+        private Rigidbody rb;
+        private Collider totemCollider;
+
+        // Events
+        public System.Action<GameObject> OnPickedUp;
+        public System.Action<bool> OnDropped;
+        public System.Action OnReset;
+
+        /// <summary>
+        /// Gets all registered totems in the scene.
+        /// </summary>
+        public static IReadOnlyList<TotemController> AllTotems => allTotems;
+
+        private void Awake()
         {
-            carryTime += Time.deltaTime;
-            currentMultiplier = Mathf.Min(1f + (carryTime * scoreMultiplierIncrease), maxMultiplier);
-        }
-        
-        // Плавное следование за носителем
-        if (isBeingCarriedSync.Value && currentCarrierObject != null)
-        {
-            UpdateCarriedPosition();
-        }
-    }
-    
-    private void UpdateCarriedPosition()
-    {
-        if (currentCarrierObject == null) return;
-        
-        Vector3 targetPos;
-        Quaternion targetRot;
-        
-        PlayerTotemInteraction playerInteraction = currentCarrierObject.GetComponent<PlayerTotemInteraction>();
-        
-        if (playerInteraction != null && playerInteraction.carryBone != null)
-        {
-            targetPos = playerInteraction.carryBone.position;
-            targetRot = playerInteraction.carryBone.rotation;
-        }
-        else
-        {
-            targetPos = currentCarrierObject.transform.position + 
-                       currentCarrierObject.transform.up * 1.5f - 
-                       currentCarrierObject.transform.forward * 0.5f;
-            targetRot = currentCarrierObject.transform.rotation;
-        }
-        
-        transform.position = Vector3.Lerp(transform.position, targetPos, Time.deltaTime * 10f);
-        transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, Time.deltaTime * 10f);
-    }
-    
-    // ТОЛЬКО на сервере вызывается, когда игрок хочет поднять тотем
-    [Server]
-    public void ServerPickUp(int carrierId)
-    {
-        if (currentCarrierId.Value != 0 || isBeingCarriedSync.Value) 
-        {
-            Debug.Log($"[SERVER] Totem already carried by player {currentCarrierId.Value}");
-            return;
-        }
-        
-        currentCarrierId.Value = carrierId;
-        isBeingCarriedSync.Value = true;
-        carryTime = 0f;
-        currentMultiplier = 1f;
-        
-        // Отключаем физику
-        if (rb != null)
-        {
-            rb.isKinematic = true;
-        }
-        
-        if (totemCollider != null)
-        {
-            totemCollider.enabled = false;
-        }
-        
-        Debug.Log($"[SERVER] Totem picked up by player {carrierId}");
-    }
-    
-    // ТОЛЬКО на сервере вызывается, когда игрок хочет бросить тотем
-    [Server]
-    public void ServerDrop(int carrierId, bool applyForce = false)
-    {
-        if (currentCarrierId.Value != carrierId) 
-        {
-            Debug.Log($"[SERVER] Player {carrierId} is not carrying this totem");
-            return;
-        }
-        
-        currentCarrierId.Value = 0;
-        isBeingCarriedSync.Value = false;
-        carryTime = 0f;
-        currentMultiplier = 1f;
-        
-        // Включаем физику
-        if (rb != null)
-        {
-            rb.isKinematic = false;
-            
-            if (applyForce)
+            rb = GetComponent<Rigidbody>();
+            totemCollider = GetComponent<Collider>();
+
+            if (rb == null)
             {
-                Vector3 forceDirection = Vector3.up * 2f + Random.insideUnitSphere * 3f;
-                rb.AddForce(forceDirection * dropForce, ForceMode.Impulse);
+                Debug.LogWarning("[TotemController] No Rigidbody found. Adding one automatically.");
+                rb = gameObject.AddComponent<Rigidbody>();
+            }
+
+            if (totemCollider == null)
+            {
+                Debug.LogWarning("[TotemController] No Collider found. Totem may not be interactable.");
             }
         }
-        
-        if (totemCollider != null)
+
+        private void OnEnable()
         {
-            totemCollider.enabled = true;
-        }
-        
-        Debug.Log($"[SERVER] Totem dropped by player {carrierId}");
-    }
-    
-    // Хук при изменении носителя
-    private void OnCarrierChanged(int prevCarrierId, int newCarrierId, bool asServer)
-    {
-        Debug.Log($"[HOOK] Carrier changed from {prevCarrierId} to {newCarrierId}");
-        
-        if (newCarrierId == 0)
-        {
-            currentCarrierObject = null;
-            
-            // На клиентах включаем физику при сбросе
-            if (!base.IsServerInitialized && rb != null)
+            if (!allTotems.Contains(this))
             {
+                allTotems.Add(this);
+            }
+        }
+
+        private void OnDisable()
+        {
+            allTotems.Remove(this);
+        }
+
+        private void Update()
+        {
+            if (isBeingCarried)
+            {
+                UpdateCarriedPosition();
+                UpdateMultiplier();
+            }
+            else if (rb != null && rb.isKinematic)
+            {
+                // Ensure physics is enabled when not carried
                 rb.isKinematic = false;
             }
         }
-        else
+
+        /// <summary>
+        /// Picks up the totem by the specified carrier.
+        /// </summary>
+        /// <param name="carrier">The GameObject that will carry the totem (player or bot)</param>
+        /// <returns>True if pickup was successful, false otherwise</returns>
+        public bool PickUp(GameObject carrier)
         {
-            // Находим объект игрока по ObjectId
-            NetworkObject playerObject = FindPlayerById(newCarrierId);
-            if (playerObject != null)
+            if (carrier == null)
             {
-                currentCarrierObject = playerObject.gameObject;
-                
-                // На клиентах отключаем физику при подборе
-                if (!base.IsServerInitialized && rb != null)
+                Debug.LogWarning("[TotemController] Cannot pick up: carrier is null");
+                return false;
+            }
+
+            if (isBeingCarried)
+            {
+                Debug.Log("[TotemController] Cannot pick up: already being carried");
+                return false;
+            }
+
+            // Check if carrier is within pickup range
+            float distance = Vector3.Distance(transform.position, carrier.transform.position);
+            if (distance > pickUpRange)
+            {
+                Debug.Log($"[TotemController] Cannot pick up: carrier too far ({distance:F2} > {pickUpRange})");
+                return false;
+            }
+
+            currentCarrier = carrier;
+            isBeingCarried = true;
+            carryTime = 0f;
+            currentMultiplier = 1f;
+
+            // Disable physics while carried
+            if (rb != null)
+            {
+                rb.isKinematic = true;
+                rb.linearVelocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+
+            // Disable collider to prevent physics interactions
+            if (totemCollider != null)
+            {
+                totemCollider.enabled = false;
+            }
+
+            Debug.Log($"[TotemController] Picked up by {carrier.name}");
+            OnPickedUp?.Invoke(carrier);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Drops the totem.
+        /// </summary>
+        /// <param name="applyForce">Whether to apply a force when dropping</param>
+        public void Drop(bool applyForce = false)
+        {
+            if (!isBeingCarried)
+            {
+                Debug.Log("[TotemController] Cannot drop: not being carried");
+                return;
+            }
+
+            GameObject previousCarrier = currentCarrier;
+
+            // Re-enable physics
+            if (rb != null)
+            {
+                rb.isKinematic = false;
+
+                if (applyForce && previousCarrier != null)
                 {
-                    rb.isKinematic = true;
+                    // Apply force in the direction the carrier is facing
+                    Vector3 dropDirection = previousCarrier.transform.forward;
+                    rb.AddForce(dropDirection * dropForce, ForceMode.Impulse);
                 }
             }
-        }
-    }
-    
-    /// <summary>
-    /// Находит игрока по ObjectId
-    /// </summary>
-    private NetworkObject FindPlayerById(int objectId)
-    {
-        foreach (var netObj in FindObjectsByType<NetworkObject>(FindObjectsSortMode.None))
-        {
-            if (netObj.ObjectId == objectId)
-                return netObj;
-        }
-        return null;
-    }
-    
-    // Геттеры
-    public bool IsBeingCarried()
-    {
-        return currentCarrierId.Value != 0;
-    }
-    
-    public int GetCarrierId()
-    {
-        return currentCarrierId.Value;
-    }
-    
-    public float GetCarryMultiplier()
-    {
-        return currentMultiplier;
-    }
-    
-    // Статические методы для поиска тотемов
-    public static TotemController GetClosestTotem(Vector3 position, float maxRange)
-    {
-        TotemController closest = null;
-        float closestDistance = float.MaxValue;
-        
-        foreach (var totem in allTotems)
-        {
-            if (totem == null) continue;
-            if (totem.IsBeingCarried()) continue;
-            
-            float distance = Vector3.Distance(position, totem.transform.position);
-            if (distance <= maxRange && distance < closestDistance)
+
+            // Re-enable collider
+            if (totemCollider != null)
             {
-                closestDistance = distance;
-                closest = totem;
+                totemCollider.enabled = true;
+            }
+
+            currentCarrier = null;
+            isBeingCarried = false;
+
+            Debug.Log($"[TotemController] Dropped by {previousCarrier?.name}");
+            OnDropped?.Invoke(applyForce);
+        }
+
+        /// <summary>
+        /// Returns whether the totem is currently being carried.
+        /// </summary>
+        public bool IsBeingCarried()
+        {
+            return isBeingCarried;
+        }
+
+        /// <summary>
+        /// Returns the current carrier's GameObject.
+        /// </summary>
+        public GameObject GetCarrier()
+        {
+            return currentCarrier;
+        }
+
+        /// <summary>
+        /// Returns the current score multiplier based on carry time.
+        /// </summary>
+        public float GetCarryMultiplier()
+        {
+            return currentMultiplier;
+        }
+
+        /// <summary>
+        /// Returns the total time the totem has been carried in current session.
+        /// </summary>
+        public float GetCarryTime()
+        {
+            return carryTime;
+        }
+
+        /// <summary>
+        /// Resets the totem to its initial state.
+        /// </summary>
+        public void ResetTotem()
+        {
+            if (isBeingCarried)
+            {
+                Drop(false);
+            }
+
+            currentCarrier = null;
+            isBeingCarried = false;
+            carryTime = 0f;
+            currentMultiplier = 1f;
+
+            // Reset physics
+            if (rb != null)
+            {
+                rb.isKinematic = false;
+                rb.linearVelocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+
+            // Re-enable collider
+            if (totemCollider != null)
+            {
+                totemCollider.enabled = true;
+            }
+
+            Debug.Log("[TotemController] Totem reset to initial state");
+            OnReset?.Invoke();
+        }
+
+        /// <summary>
+        /// Gets the pickup range for this totem.
+        /// </summary>
+        public float GetPickupRange()
+        {
+            return pickUpRange;
+        }
+
+        /// <summary>
+        /// Updates the position to smoothly follow the carrier.
+        /// </summary>
+        private void UpdateCarriedPosition()
+        {
+            if (currentCarrier == null)
+            {
+                Drop(false);
+                return;
+            }
+
+            Vector3 targetPosition = currentCarrier.transform.position + Vector3.up * carryHeightOffset;
+            transform.position = Vector3.Lerp(transform.position, targetPosition, smoothFollowSpeed * Time.deltaTime);
+
+            // Rotate the totem while carried
+            transform.Rotate(Vector3.up, rotationSpeed * Time.deltaTime, Space.World);
+        }
+
+        /// <summary>
+        /// Updates the score multiplier based on carry time.
+        /// </summary>
+        private void UpdateMultiplier()
+        {
+            carryTime += Time.deltaTime;
+            currentMultiplier = Mathf.Min(1f + carryTime * scoreMultiplierIncrease, maxMultiplier);
+        }
+
+        /// <summary>
+        /// Finds the closest totem to the given position.
+        /// </summary>
+        /// <param name="position">Position to check from</param>
+        /// <returns>Closest TotemController or null if none exist</returns>
+        public static TotemController FindClosest(Vector3 position)
+        {
+            TotemController closest = null;
+            float closestDistance = float.MaxValue;
+
+            foreach (var totem in allTotems)
+            {
+                if (totem == null) continue;
+
+                float distance = Vector3.Distance(position, totem.transform.position);
+                if (distance < closestDistance)
+                {
+                    closestDistance = distance;
+                    closest = totem;
+                }
+            }
+
+            return closest;
+        }
+
+        /// <summary>
+        /// Finds the closest totem within pickup range of the given position.
+        /// </summary>
+        /// <param name="position">Position to check from</param>
+        /// <returns>Closest TotemController within range or null</returns>
+        public static TotemController FindClosestInRange(Vector3 position)
+        {
+            TotemController closest = null;
+            float closestDistance = float.MaxValue;
+
+            foreach (var totem in allTotems)
+            {
+                if (totem == null) continue;
+
+                float distance = Vector3.Distance(position, totem.transform.position);
+                if (distance < totem.pickUpRange && distance < closestDistance)
+                {
+                    closestDistance = distance;
+                    closest = totem;
+                }
+            }
+
+            return closest;
+        }
+
+        /// <summary>
+        /// Gets the number of active totems in the scene.
+        /// </summary>
+        public static int GetTotemCount()
+        {
+            return allTotems.Count;
+        }
+
+        private void OnDrawGizmosSelected()
+        {
+            // Draw pickup range
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawWireSphere(transform.position, pickUpRange);
+
+            // Draw line to carrier if being carried
+            if (isBeingCarried && currentCarrier != null)
+            {
+                Gizmos.color = Color.green;
+                Gizmos.DrawLine(transform.position, currentCarrier.transform.position);
             }
         }
-        
-        return closest;
     }
-    
-    /// <summary>
-    /// Сбрасывает тотем в начальное состояние (вызывается при рестарте игры)
-    /// </summary>
-    [Server]
-    public void ResetTotem()
-    {
-        // Сбрасываем носителя
-        currentCarrierId.Value = 0;
-        isBeingCarriedSync.Value = false;
-        carryTime = 0f;
-        currentMultiplier = 1f;
-        currentCarrierObject = null;
-        
-        // Включаем физику
-        if (rb != null)
-        {
-            rb.isKinematic = false;
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-        }
-        
-        if (totemCollider != null)
-        {
-            totemCollider.enabled = true;
-        }
-        
-        Debug.Log("[TotemController] Totem reset to default state");
-    }
-    
 }

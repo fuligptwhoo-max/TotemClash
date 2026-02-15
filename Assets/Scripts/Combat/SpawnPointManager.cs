@@ -1,6 +1,8 @@
 using UnityEngine;
 
-public class SpawnPointManager : MonoBehaviour
+namespace TotemClash.Combat
+{
+    public class SpawnPointManager : MonoBehaviour
 {
     public static SpawnPointManager Instance { get; private set; }
     
@@ -48,4 +50,5 @@ public class SpawnPointManager : MonoBehaviour
         
         return GetRandomSpawnPoint();
     }
+}
 }

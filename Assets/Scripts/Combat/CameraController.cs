@@ -1,9 +1,11 @@
 using UnityEngine;
 
-/// <summary>
-/// Простой контроллер камеры - следует за целью с указанным смещением
-/// </summary>
-public class CameraController : MonoBehaviour
+namespace TotemClash.Combat
+{
+    /// <summary>
+    /// Простой контроллер камеры - следует за целью с указанным смещением
+    /// </summary>
+    public class CameraController : MonoBehaviour
 {
     [Header("Camera Settings")]
     [Tooltip("Смещение камеры относительно цели")]
@@ -56,4 +58,5 @@ public class CameraController : MonoBehaviour
     {
         return target;
     }
+}
 }

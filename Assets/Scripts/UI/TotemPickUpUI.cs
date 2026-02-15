@@ -1,128 +1,132 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TotemClash.Combat;
 
-public class TotemPickupUI : MonoBehaviour
+namespace TotemClash.UI
 {
-    [Header("UI Components")]
-    public Slider pickupSlider;
-    public Text pickupText;
-    public CanvasGroup canvasGroup;
-    
-    [Header("Settings")]
-    public float fadeSpeed = 5f;
-    public float showDuration = 2f;
-    
-    private bool isShowing = false;
-    private float showTimer = 0f;
-    private float targetAlpha = 0f;
-    
-    private void Awake()
+    public class TotemPickupUI : MonoBehaviour
     {
-        // Автоматически находим компоненты если не назначены
-        if (pickupSlider == null)
-            pickupSlider = GetComponentInChildren<Slider>();
+        [Header("UI Components")]
+        public Slider pickupSlider;
+        public Text pickupText;
+        public CanvasGroup canvasGroup;
         
-        if (pickupText == null)
-        {
-            Text[] texts = GetComponentsInChildren<Text>();
-            if (texts.Length > 0)
-                pickupText = texts[0];
-        }
+        [Header("Settings")]
+        public float fadeSpeed = 5f;
+        public float showDuration = 2f;
         
-        if (canvasGroup == null)
-            canvasGroup = GetComponent<CanvasGroup>();
+        private bool isShowing = false;
+        private float showTimer = 0f;
+        private float targetAlpha = 0f;
         
-        if (canvasGroup != null)
+        private void Awake()
         {
-            canvasGroup.alpha = 0f;
-            canvasGroup.interactable = false;
-            canvasGroup.blocksRaycasts = false;
-        }
-    }
-    
-    private void Update()
-    {
-        // Плавное появление/исчезновение
-        if (canvasGroup != null)
-        {
-            canvasGroup.alpha = Mathf.Lerp(canvasGroup.alpha, targetAlpha, Time.deltaTime * fadeSpeed);
-        }
-        
-        // Таймер показа
-        if (isShowing)
-        {
-            showTimer += Time.deltaTime;
-            if (showTimer >= showDuration)
+            // Автоматически находим компоненты если не назначены
+            if (pickupSlider == null)
+                pickupSlider = GetComponentInChildren<Slider>();
+            
+            if (pickupText == null)
             {
-                Hide();
+                Text[] texts = GetComponentsInChildren<Text>();
+                if (texts.Length > 0)
+                    pickupText = texts[0];
+            }
+            
+            if (canvasGroup == null)
+                canvasGroup = GetComponent<CanvasGroup>();
+            
+            if (canvasGroup != null)
+            {
+                canvasGroup.alpha = 0f;
+                canvasGroup.interactable = false;
+                canvasGroup.blocksRaycasts = false;
             }
         }
-    }
-    
-    public void Show()
-    {
-        isShowing = true;
-        showTimer = 0f;
-        targetAlpha = 1f;
         
-        if (canvasGroup != null)
+        private void Update()
         {
-            canvasGroup.interactable = true;
-        }
-    }
-    
-    public void Hide()
-    {
-        isShowing = false;
-        targetAlpha = 0f;
-        
-        if (canvasGroup != null)
-        {
-            canvasGroup.interactable = false;
-            canvasGroup.blocksRaycasts = false;
-        }
-    }
-    
-    public void UpdateProgress(float progress, float timeRemaining)
-    {
-        if (pickupSlider != null)
-        {
-            pickupSlider.value = Mathf.Clamp01(progress);
+            // Плавное появление/исчезновение
+            if (canvasGroup != null)
+            {
+                canvasGroup.alpha = Mathf.Lerp(canvasGroup.alpha, targetAlpha, Time.deltaTime * fadeSpeed);
+            }
             
-            // Обновляем текст
+            // Таймер показа
+            if (isShowing)
+            {
+                showTimer += Time.deltaTime;
+                if (showTimer >= showDuration)
+                {
+                    Hide();
+                }
+            }
+        }
+        
+        public void Show()
+        {
+            isShowing = true;
+            showTimer = 0f;
+            targetAlpha = 1f;
+            
+            if (canvasGroup != null)
+            {
+                canvasGroup.interactable = true;
+            }
+        }
+        
+        public void Hide()
+        {
+            isShowing = false;
+            targetAlpha = 0f;
+            
+            if (canvasGroup != null)
+            {
+                canvasGroup.interactable = false;
+                canvasGroup.blocksRaycasts = false;
+            }
+        }
+        
+        public void UpdateProgress(float progress, float timeRemaining)
+        {
+            if (pickupSlider != null)
+            {
+                pickupSlider.value = Mathf.Clamp01(progress);
+                
+                // Обновляем текст
+                if (pickupText != null)
+                {
+                    if (progress <= 0f)
+                    {
+                        pickupText.text = "Нажмите E для подбора";
+                    }
+                    else if (progress >= 1f)
+                    {
+                        pickupText.text = "Подобран!";
+                    }
+                    else
+                    {
+                        pickupText.text = $"Подбор... {Mathf.RoundToInt(progress * 100)}%";
+                    }
+                }
+            }
+        }
+        
+        public void ResetProgress()
+        {
+            if (pickupSlider != null)
+            {
+                pickupSlider.value = 0f;
+            }
+            
             if (pickupText != null)
             {
-                if (progress <= 0f)
-                {
-                    pickupText.text = "Нажмите E для подбора";
-                }
-                else if (progress >= 1f)
-                {
-                    pickupText.text = "Подобран!";
-                }
-                else
-                {
-                    pickupText.text = $"Подбор... {Mathf.RoundToInt(progress * 100)}%";
-                }
+                pickupText.text = "Нажмите E для подбора";
             }
         }
-    }
-    
-    public void ResetProgress()
-    {
-        if (pickupSlider != null)
-        {
-            pickupSlider.value = 0f;
-        }
         
-        if (pickupText != null)
+        public bool IsVisible()
         {
-            pickupText.text = "Нажмите E для подбора";
+            return canvasGroup != null && canvasGroup.alpha > 0.1f;
         }
-    }
-    
-    public bool IsVisible()
-    {
-        return canvasGroup != null && canvasGroup.alpha > 0.1f;
     }
 }

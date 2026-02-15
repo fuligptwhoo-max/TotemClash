@@ -1601,7 +1601,6 @@ RectTransform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 288222038}
-  - {fileID: 1149053117}
   - {fileID: 192244101}
   m_Father: {fileID: 1833171308}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -2574,7 +2573,6 @@ GameObject:
   m_Component:
   - component: {fileID: 631259833}
   - component: {fileID: 631259832}
-  - component: {fileID: 631259831}
   m_Layer: 0
   m_Name: GameSettings
   m_TagString: Untagged
@@ -2582,60 +2580,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &631259831
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 631259830}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 26b716c41e9b56b4baafaf13a523ba2e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: FishNet.Runtime::FishNet.Object.NetworkObject
-  <IsNested>k__BackingField: 0
-  WasActiveDuringEdit: 1
-  WasActiveDuringEdit_Set1: 1
-  <ComponentIndex>k__BackingField: 0
-  <PredictedSpawn>k__BackingField: {fileID: 0}
-  <PredictedOwner>k__BackingField: {fileID: 0}
-  NetworkBehaviours: []
-  InitializedParentNetworkBehaviour: {fileID: 0}
-  InitializedNestedNetworkObjects: []
-  RuntimeParentNetworkBehaviour: {fileID: 0}
-  RuntimeChildNetworkBehaviours: []
-  _isNetworked: 1
-  _isSpawnable: 1
-  _isGlobal: 0
-  _initializeOrder: 0
-  _preventDespawnOnDisconnect: 0
-  _defaultDespawnType: 0
-  _initializedTimestamp: 0
-  NetworkObserver: {fileID: 0}
-  _enablePrediction: 0
-  _predictionType: 0
-  _localReconcileCorrectionType: 2
-  _graphicalObject: {fileID: 0}
-  _detachGraphicalObject: 0
-  _enableStateForwarding: 1
-  _networkTransform: {fileID: 0}
-  _ownerInterpolation: 1
-  _ownerSmoothedProperties: 255
-  _adaptiveInterpolation: 3
-  _spectatorSmoothedProperties: 255
-  _spectatorInterpolation: 2
-  _enableTeleport: 0
-  _teleportThreshold: 1
-  <PrefabId>k__BackingField: 65535
-  <SpawnableCollectionId>k__BackingField: 0
-  <AssetPathHash>k__BackingField: 0
-  SceneId: 2658924986
-  SerializedTransformProperties:
-    Position: {x: 0, y: 0, z: 0}
-    Rotation: {x: 0, y: 0, z: 0, w: 0}
-    Scale: {x: 0, y: 0, z: 0}
-    IsValid: 0
 --- !u!114 &631259832
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2648,13 +2592,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ee861eb8c69918946920cf9a0c919207, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GameSettings
-  _componentIndexCache: 255
-  _addedNetworkObject: {fileID: 631259831}
-  _networkObjectCache: {fileID: 0}
-  defaultGameTime: 300
-  defaultPlayerSpeed: 8
-  defaultProjectileSpeed: 20
-  defaultDamage: 25
+  gameTime: 300
+  playerSpeed: 8
+  projectileSpeed: 15
+  damagePerHit: 20
+  OnGameTimeChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  OnPlayerSpeedChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  OnProjectileSpeedChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  OnDamageChanged:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!4 &631259833
 Transform:
   m_ObjectHideFlags: 0
@@ -4358,11 +4311,11 @@ RectTransform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1864144063}
-  m_Father: {fileID: 276773312}
+  m_Father: {fileID: 1369333909}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0}
   m_AnchorMax: {x: 0.5, y: 0}
-  m_AnchoredPosition: {x: 0, y: 115}
+  m_AnchoredPosition: {x: 0, y: 277.5}
   m_SizeDelta: {x: 225, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1149053118
@@ -4523,87 +4476,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1162981678}
   m_CullTransparentMesh: 1
---- !u!1001 &1203949628
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 100000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_Name
-      value: NetworkManager
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 485.8751
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 894.306
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 2360.0203
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 400000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents:
-    - targetCorrespondingSourceObject: {fileID: 100000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 1203949630}
-  m_SourcePrefab: {fileID: 100100000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
---- !u!1 &1203949629 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 100000, guid: a422a36d1d894332870c5f4116595f3c, type: 3}
-  m_PrefabInstance: {fileID: 1203949628}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &1203949630
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1203949629}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 15895a51081447d46bda466e7e830c08, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: FishNet.Runtime::FishNet.Managing.Scened.SceneManager
-  _sceneProcessor: {fileID: 0}
-  _lightProbeUpdating: 0
-  _moveClientObjects: 1
-  _setActiveScene: 1
 --- !u!1 &1212241129
 GameObject:
   m_ObjectHideFlags: 0
@@ -5198,6 +5070,7 @@ RectTransform:
   - {fileID: 605857599}
   - {fileID: 538941282}
   - {fileID: 1974232522}
+  - {fileID: 1149053117}
   m_Father: {fileID: 1212241133}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
@@ -5410,14 +5283,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::LobbyManager
   lobbyPanel: {fileID: 1833171307}
   settingsPanel: {fileID: 676104268}
-  networkMenuPanel: {fileID: 1102091386}
-  loadingPanel: {fileID: 1162981678}
-  playersListContainer: {fileID: 520845476}
-  playerEntryPrefab: {fileID: 8399838163231540642, guid: fc015a505a3fedc4d8a8adf10fbd96c5, type: 3}
-  lobbyStatusText: {fileID: 1781052265}
-  startGameButton: {fileID: 288222039}
-  backButton: {fileID: 192244102}
-  settingsButton: {fileID: 1149053118}
   gameTimeSlider: {fileID: 1794579837}
   gameTimeValue: {fileID: 857206932}
   playerSpeedSlider: {fileID: 2130629035}
@@ -5426,9 +5291,11 @@ MonoBehaviour:
   projectileSpeedValue: {fileID: 264765970}
   damageSlider: {fileID: 186415370}
   damageValue: {fileID: 246678480}
+  startGameButton: {fileID: 288222039}
+  backButton: {fileID: 192244102}
+  settingsButton: {fileID: 1149053118}
   settingsBackButton: {fileID: 2060368305}
   resetDefaultsButton: {fileID: 120242711}
-  networkManager: {fileID: 0}
   gameSceneName: SampleScene
 --- !u!4 &1403771425
 Transform:
@@ -7874,19 +7741,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MainMenu
   mainMenuPanel: {fileID: 1369333908}
   playButton: {fileID: 538941283}
-  settingsButton: {fileID: 0}
+  settingsButton: {fileID: 1149053118}
   quitButton: {fileID: 1974232523}
   titleText: {fileID: 605857600}
-  networkMenuPanel: {fileID: 1102091386}
-  hostButton: {fileID: 1505322473}
-  clientButton: {fileID: 855471979}
-  serverButton: {fileID: 1428245620}
-  backButton: {fileID: 1078429357}
-  ipInputField: {fileID: 1666090282}
-  statusText: {fileID: 2011519447}
   loadingPanel: {fileID: 1162981678}
-  networkManager: {fileID: 0}
-  lobbyManager: {fileID: 1403771424}
+  settingsPanel: {fileID: 676104268}
 --- !u!4 &2043718056
 Transform:
   m_ObjectHideFlags: 0
@@ -8275,5 +8134,4 @@ SceneRoots:
   - {fileID: 2043718056}
   - {fileID: 1403771425}
   - {fileID: 631259833}
-  - {fileID: 1203949628}
   - {fileID: 1364574009}

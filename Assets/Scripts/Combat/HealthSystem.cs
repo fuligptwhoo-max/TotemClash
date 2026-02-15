@@ -1,256 +1,249 @@
 using UnityEngine;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
-using FishNet.Connection;
+using UnityEngine.Events;
 using System.Collections;
 
-public class HealthSystem : NetworkBehaviour
+namespace TotemClash.Combat
 {
-    // FishNet 4.x SyncVar
-    public readonly SyncVar<float> currentHealth = new SyncVar<float>(100f);
-    
-    public float maxHealth = 100f;
+    public class HealthSystem : MonoBehaviour
+    {
+        [Header("Health Settings")]
+        [SerializeField] private float maxHealth = 100f;
+        [SerializeField] private float currentHealth;
 
-    private NetworkPlayerController playerController;
-    public GameObject deathEffect;
-    
-    // Для избежания двойного урона
-    private float lastDamageTime = 0f;
-    private const float damageCooldown = 0.1f;
+        [Header("Death Animation")]
+        [SerializeField] private bool useRigidbodyDeath = true;
+        [SerializeField] private float deathAnimationDuration = 1f;
+        [SerializeField] private float respawnDelay = 3f;
+        
+        [Header("Respawn")]
+        [Tooltip("If true, will automatically respawn after death delay. If false, destroys the object.")]
+        public bool autoRespawn = true;
 
-    public override void OnStartNetwork()
-    {
-        base.OnStartNetwork();
-        
-        playerController = GetComponent<NetworkPlayerController>();
-        
-        // Подписываемся на изменения
-        currentHealth.OnChange += OnHealthChanged;
-        
-        if (base.IsServerInitialized)
-        {
-            currentHealth.Value = maxHealth;
-        }
-    }
-    
-    public override void OnStopNetwork()
-    {
-        base.OnStopNetwork();
-        currentHealth.OnChange -= OnHealthChanged;
-    }
+        [Header("References")]
+        [SerializeField] private Rigidbody rb;
+        [SerializeField] private Animator animator;
+        [SerializeField] private Collider hitCollider;
+        [SerializeField] private Behaviour[] componentsToDisableOnDeath;
 
-    public void TakeDamage(float damage, GameObject source)
-    {
-        if (currentHealth.Value <= 0) return;
-        
-        Debug.Log($"TakeDamage called! Source: {source?.name}, Damage: {damage}, IsServer: {base.IsServerInitialized}, IsOwner: {base.IsOwner}");
-        
-        // Проверка кулдауна
-        if (Time.time - lastDamageTime < damageCooldown) return;
-        
-        if (base.IsServerInitialized)
-        {
-            ApplyDamage(damage, source);
-        }
-        else if (base.IsOwner)
-        {
-            CmdTakeDamage(damage, source);
-        }
-    }
+        [Header("Events")]
+        public UnityEvent<float> OnHealthChanged;
+        public UnityEvent<float> OnDamaged;
+        public UnityEvent OnDeath;
+        public UnityEvent OnRespawn;
 
-    [ServerRpc]
-    void CmdTakeDamage(float damage, GameObject source)
-    {
-        Debug.Log($"CmdTakeDamage received on server for {gameObject.name}, damage: {damage}");
-        ApplyDamage(damage, source);
-    }
+        private bool isDead = false;
+        private Vector3 spawnPosition;
+        private Quaternion spawnRotation;
+        private Vector3 originalScale; // ИСПРАВЛЕНО: сохраняем оригинальный масштаб
 
-    [Server]
-    void ApplyDamage(float damage, GameObject source)
-    {
-        Debug.Log($"ApplyDamage on server: {gameObject.name} takes {damage} damage");
-        
-        lastDamageTime = Time.time;
-        currentHealth.Value -= damage;
-        
-        if (currentHealth.Value <= 0)
-        {
-            currentHealth.Value = 0;
-            RpcDie(source);
-        }
-        
-        Debug.Log($"Health of {gameObject.name}: {currentHealth.Value}");
-    }
+        public float CurrentHealth => currentHealth;
+        public float MaxHealth => maxHealth;
+        public bool IsDead => isDead;
 
-    [ObserversRpc]
-    void RpcDie(GameObject killer)
-    {
-        Debug.Log($"RpcDie called for {gameObject.name}");
-        
-        // Запускаем анимацию смерти
-        StartCoroutine(DeathAnimation());
-        
-        if (deathEffect != null) 
+        private void Awake()
         {
-            GameObject effect = Instantiate(deathEffect, transform.position, Quaternion.identity);
-            Destroy(effect, 3f);
+            currentHealth = maxHealth;
+            spawnPosition = transform.position;
+            spawnRotation = transform.rotation;
+            originalScale = transform.localScale; // ИСПРАВЛЕНО: сохраняем масштаб при старте
+
+            if (rb == null)
+                rb = GetComponent<Rigidbody>();
+            if (animator == null)
+                animator = GetComponent<Animator>();
         }
-        
-        if (playerController != null) 
+
+        private void Start()
         {
-            playerController.OnPlayerDeath();
+            OnHealthChanged?.Invoke(GetHealthPercent());
         }
-        
-        // Сброс тотема при смерти
-        PlayerTotemInteraction totemInteraction = GetComponent<PlayerTotemInteraction>();
-        if (totemInteraction != null)
+
+        public void TakeDamage(float damage, GameObject source)
         {
-            totemInteraction.OnPlayerDeath();
-        }
-        
-        if (base.IsServerInitialized)
-        {
-            StartCoroutine(ServerRespawn(3f));
-        }
-    }
-    
-    /// <summary>
-    /// Анимация смерти - подпрыгивание и падение
-    /// </summary>
-    IEnumerator DeathAnimation()
-    {
-        Rigidbody rb = GetComponent<Rigidbody>();
-        if (rb != null)
-        {
-            // Отключаем управление физикой на время анимации
-            rb.isKinematic = false;
-            
-            // Подбрасываем вверх и назад
-            Vector3 jumpForce = new Vector3(Random.Range(-2f, 2f), 8f, Random.Range(-2f, 2f));
-            rb.AddForce(jumpForce, ForceMode.Impulse);
-            
-            // Добавляем вращение
-            rb.AddTorque(Random.insideUnitSphere * 10f, ForceMode.Impulse);
-            
-            // Ждём 1 секунду
-            yield return new WaitForSeconds(1f);
-            
-            // Включаем обратно кинематик перед респавном
-            rb.isKinematic = true;
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-        }
-        else
-        {
-            // Если нет Rigidbody - просто подпрыгиваем через трансформ
-            Vector3 startPos = transform.position;
-            float duration = 1f;
-            float elapsed = 0f;
-            
-            while (elapsed < duration)
+            if (isDead || damage <= 0)
+                return;
+
+            currentHealth -= damage;
+            currentHealth = Mathf.Clamp(currentHealth, 0, maxHealth);
+
+            OnHealthChanged?.Invoke(GetHealthPercent());
+            OnDamaged?.Invoke(damage);
+
+            if (currentHealth <= 0)
             {
-                elapsed += Time.deltaTime;
-                float t = elapsed / duration;
-                // Параболическая траектория
-                float height = Mathf.Sin(t * Mathf.PI) * 3f;
-                transform.position = startPos + Vector3.up * height;
-                yield return null;
+                Die(source);
             }
         }
-    }
 
-    IEnumerator ServerRespawn(float delay)
-    {
-        yield return new WaitForSeconds(delay);
-        Respawn();
-    }
-
-    /// <summary>
-    /// Сбрасывает здоровье игрока к максимуму (без телепортации)
-    /// </summary>
-    [Server]
-    public void ResetHealth()
-    {
-        currentHealth.Value = maxHealth;
-        lastDamageTime = 0f;
-        Debug.Log($"[HealthSystem] {gameObject.name} health reset to {maxHealth}");
-    }
-
-    [Server]
-    public void Respawn()
-    {
-        currentHealth.Value = maxHealth;
-        lastDamageTime = 0f;
-        
-        MyNetworkManager networkManager = MyNetworkManager.Instance;
-        
-        if (networkManager != null)
+        private void Die(GameObject killer)
         {
-            Transform spawnPoint = networkManager.GetRandomSpawnPoint();
-            if (spawnPoint != null)
+            if (isDead)
+                return;
+
+            isDead = true;
+            OnDeath?.Invoke();
+
+            StartCoroutine(DeathAnimationCoroutine());
+        }
+
+        private IEnumerator DeathAnimationCoroutine()
+        {
+            DropTotemOnDeath();
+            SetComponentsEnabled(false);
+
+            if (useRigidbodyDeath && rb != null)
             {
-                Teleport(spawnPoint.position, spawnPoint.rotation);
-                Debug.Log($"{gameObject.name} respawned at spawn point: {spawnPoint.name}");
+                rb.isKinematic = false;
+                rb.useGravity = true;
+
+                Vector3 randomForce = new Vector3(
+                    Random.Range(-2f, 2f),
+                    Random.Range(3f, 5f),
+                    Random.Range(-2f, 2f)
+                );
+                rb.AddForce(randomForce, ForceMode.Impulse);
+
+                Vector3 randomTorque = new Vector3(
+                    Random.Range(-5f, 5f),
+                    Random.Range(-5f, 5f),
+                    Random.Range(-5f, 5f)
+                );
+                rb.AddTorque(randomTorque, ForceMode.Impulse);
             }
             else
             {
-                Vector3 randomPos = new Vector3(
-                    Random.Range(-10f, 10f), 
-                    2f, 
-                    Random.Range(-10f, 10f)
-                );
-                Teleport(randomPos, Quaternion.identity);
+                yield return StartCoroutine(SimpleDeathAnimation());
+            }
+            
+            yield return new WaitForSeconds(deathAnimationDuration);
+
+            if (autoRespawn)
+            {
+                yield return new WaitForSeconds(respawnDelay - deathAnimationDuration);
+                Respawn();
+            }
+            else
+            {
+                yield return new WaitForSeconds(1f);
+                Destroy(gameObject);
             }
         }
-        else
+
+        private IEnumerator SimpleDeathAnimation()
         {
-            Vector3 randomPos = new Vector3(
-                Random.Range(-10f, 10f), 
-                2f, 
-                Random.Range(-10f, 10f)
+            Vector3 startPosition = transform.position;
+            Vector3 endPosition = startPosition + Vector3.down * 0.5f;
+            Quaternion startRotation = transform.rotation;
+            Quaternion endRotation = Quaternion.Euler(
+                startRotation.eulerAngles.x + 90f,
+                startRotation.eulerAngles.y,
+                startRotation.eulerAngles.z
             );
-            Teleport(randomPos, Quaternion.identity);
-        }
-        
-        RpcRespawn();
-    }
-    
-    /// <summary>
-    /// Телепортирует игрока (только на сервере)
-    /// </summary>
-    [Server]
-    private void Teleport(Vector3 position, Quaternion rotation)
-    {
-        transform.position = position;
-        transform.rotation = rotation;
-        
-        // Отправляем клиентам обновление позиции
-        TargetTeleport(Owner, position, rotation);
-    }
-    
-    [TargetRpc]
-    private void TargetTeleport(NetworkConnection conn, Vector3 position, Quaternion rotation)
-    {
-        transform.position = position;
-        transform.rotation = rotation;
-    }
 
-    [ObserversRpc]
-    void RpcRespawn()
-    {
-        if (playerController != null)
+            float elapsed = 0f;
+            while (elapsed < deathAnimationDuration)
+            {
+                float t = elapsed / deathAnimationDuration;
+                transform.position = Vector3.Lerp(startPosition, endPosition, t);
+                transform.rotation = Quaternion.Lerp(startRotation, endRotation, t);
+                // Не меняем масштаб здесь, или меняем временно
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+        }
+
+        public void Respawn()
         {
-            playerController.OnPlayerRespawn();
-        }
-        
-        Debug.Log($"{gameObject.name} respawned!");
-    }
+            ResetHealth();
 
-    /// <summary>
-    /// Хук для SyncVar - вызывается при изменении здоровья
-    /// </summary>
-    private void OnHealthChanged(float prev, float next, bool asServer)
-    {
-        Debug.Log($"{gameObject.name}: Health changed from {prev} to {next}");
+            transform.position = spawnPosition;
+            transform.rotation = spawnRotation;
+            transform.localScale = originalScale; // ИСПРАВЛЕНО: восстанавливаем сохраненный масштаб
+
+            if (rb != null)
+            {
+                rb.linearVelocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+                rb.isKinematic = true;
+                rb.useGravity = false;
+            }
+
+            SetComponentsEnabled(true);
+
+            if (animator != null)
+            {
+                animator.Rebind();
+                animator.Update(0f);
+            }
+
+            isDead = false;
+            OnRespawn?.Invoke();
+        }
+
+        public void ResetHealth()
+        {
+            currentHealth = maxHealth;
+            OnHealthChanged?.Invoke(GetHealthPercent());
+        }
+
+        public float GetHealthPercent()
+        {
+            return maxHealth > 0 ? currentHealth / maxHealth : 0f;
+        }
+
+        private void DropTotemOnDeath()
+        {
+            PlayerTotemInteraction totemInteraction = GetComponent<PlayerTotemInteraction>();
+            if (totemInteraction != null && totemInteraction.IsCarrying)
+            {
+                totemInteraction.OnPlayerDeath();
+                Debug.Log($"[HealthSystem] {gameObject.name} dropped totem on death.");
+            }
+        }
+
+        public void SetSpawnPosition(Vector3 position, Quaternion rotation)
+        {
+            spawnPosition = position;
+            spawnRotation = rotation;
+        }
+
+        private void SetComponentsEnabled(bool enabled)
+        {
+            if (hitCollider != null)
+                hitCollider.enabled = enabled;
+
+            if (componentsToDisableOnDeath != null)
+            {
+                foreach (var component in componentsToDisableOnDeath)
+                {
+                    if (component != null)
+                        component.enabled = enabled;
+                }
+            }
+
+            if (animator != null && !enabled)
+                animator.enabled = false;
+            else if (animator != null && enabled)
+                animator.enabled = true;
+                
+            CharacterController cc = GetComponent<CharacterController>();
+            if (cc != null)
+                cc.enabled = enabled;
+        }
+
+        public void Heal(float amount)
+        {
+            if (isDead || amount <= 0)
+                return;
+
+            currentHealth += amount;
+            currentHealth = Mathf.Clamp(currentHealth, 0, maxHealth);
+            OnHealthChanged?.Invoke(GetHealthPercent());
+        }
+
+        public void Kill(GameObject killer = null)
+        {
+            TakeDamage(maxHealth, killer);
+        }
     }
 }

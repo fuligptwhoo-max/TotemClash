@@ -1,83 +1,112 @@
 using UnityEngine;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
+using TotemClash.Combat;
 
-public class MeteorProjectile : NetworkBehaviour
+namespace TotemClash.Combat.Projectiles
 {
-    [Header("Settings")]
-    public Vector3 targetPosition;
-    public float damage = 50f;
-    public float radius = 5f;
-    public float fallSpeed = 15f;
-    
-    // FishNet 4.x SyncVar
-    public readonly SyncVar<GameObject> owner = new SyncVar<GameObject>();
-    
-    private bool hasExploded = false;
-    
-    public override void OnStartNetwork()
+    public class MeteorProjectile : MonoBehaviour
     {
-        base.OnStartNetwork();
+        [Header("Settings")]
+        public Vector3 targetPosition;
+        public float damage = 50f;
+        public float radius = 5f;
+        public float fallSpeed = 15f;
+        public float lifeTime = 10f;
         
-        // Если targetPosition не задана, берем из SyncVar или устанавливаем впереди
-        if (targetPosition == Vector3.zero)
+        [Header("Effects")]
+        public GameObject explosionEffect;
+        
+        // Local references
+        private GameObject owner;
+        private bool hasExploded = false;
+        
+        private void Start()
         {
-            targetPosition = transform.position + transform.forward * 10f;
-        }
-    }
-    
-    private void Update()
-    {
-        if (!base.IsServerInitialized) return;
-        if (hasExploded) return;
-        
-        // Движение к цели
-        transform.position = Vector3.MoveTowards(transform.position, targetPosition, fallSpeed * Time.deltaTime);
-        
-        if (Vector3.Distance(transform.position, targetPosition) < 0.5f)
-        {
-            Explode();
-        }
-    }
-    
-    [Server]
-    private void Explode()
-    {
-        if (hasExploded) return;
-        hasExploded = true;
-        
-        // Взрыв метеорита
-        Collider[] colliders = Physics.OverlapSphere(transform.position, radius);
-        foreach (Collider collider in colliders)
-        {
-            if (collider.gameObject != owner.Value && collider.CompareTag("Player"))
+            // If targetPosition is not set, use position in front
+            if (targetPosition == Vector3.zero)
             {
-                HealthSystem health = collider.GetComponent<HealthSystem>();
-                if (health != null)
-                {
-                    health.TakeDamage(damage, owner.Value);
-                    Debug.Log($"{owner.Value?.name} dealt {damage} meteor damage to {collider.name}");
-                }
+                targetPosition = transform.position + transform.forward * 10f;
+            }
+            
+            // Auto-destroy after lifetime as fallback
+            Invoke(nameof(DestroyProjectile), lifeTime);
+        }
+        
+        /// <summary>
+        /// Initialize the projectile with owner and target position
+        /// </summary>
+        public void Initialize(GameObject owner, Vector3 targetPos)
+        {
+            this.owner = owner;
+            this.targetPosition = targetPos;
+        }
+        
+        /// <summary>
+        /// Initialize the projectile with owner only
+        /// </summary>
+        public void Initialize(GameObject owner)
+        {
+            this.owner = owner;
+        }
+        
+        private void Update()
+        {
+            if (hasExploded) return;
+            
+            // Move towards target
+            transform.position = Vector3.MoveTowards(transform.position, targetPosition, fallSpeed * Time.deltaTime);
+            
+            if (Vector3.Distance(transform.position, targetPosition) < 0.5f)
+            {
+                Explode();
             }
         }
         
-        // Эффект взрыва можно заспавнить здесь
-        // SpawnExplosionEffect();
-        
-        // Уничтожаем
-        base.ServerManager.Despawn(gameObject);
-    }
-    
-    private void OnDrawGizmos()
-    {
-        Gizmos.color = Color.red;
-        Gizmos.DrawWireSphere(transform.position, radius);
-        
-        if (targetPosition != Vector3.zero)
+        private void Explode()
         {
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawLine(transform.position, targetPosition);
-            Gizmos.DrawWireSphere(targetPosition, 0.5f);
+            if (hasExploded) return;
+            hasExploded = true;
+            
+            // Meteor explosion
+            Collider[] colliders = Physics.OverlapSphere(transform.position, radius);
+            foreach (Collider collider in colliders)
+            {
+                if (collider.gameObject != owner && collider.CompareTag("Player"))
+                {
+                    HealthSystem health = collider.GetComponent<HealthSystem>();
+                    if (health != null)
+                    {
+                        health.TakeDamage(damage, owner);
+                        Debug.Log($"{owner?.name} dealt {damage} meteor damage to {collider.name}");
+                    }
+                }
+            }
+            
+            // Spawn explosion effect if assigned
+            if (explosionEffect != null)
+            {
+                Instantiate(explosionEffect, transform.position, Quaternion.identity);
+            }
+            
+            // Destroy
+            DestroyProjectile();
+        }
+        
+        private void DestroyProjectile()
+        {
+            Destroy(gameObject);
+        }
+        
+        private void OnDrawGizmos()
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawWireSphere(transform.position, radius);
+            
+            if (targetPosition != Vector3.zero)
+            {
+                Gizmos.color = Color.yellow;
+                Gizmos.DrawLine(transform.position, targetPosition);
+                Gizmos.DrawWireSphere(targetPosition, 0.5f);
+            }
         }
     }
 }

@@ -1,256 +1,284 @@
 using UnityEngine;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
 using System.Collections;
+using TotemClash.Combat;
+using TotemClash.Classes;
 
-public class FireballProjectile : NetworkBehaviour
+namespace TotemClash.Combat.Projectiles
 {
-    [Header("Settings")]
-    public float speed = 40f;
-    public float damage = 50f;
-    public float lifeTime = 3f;
-    
-    [Header("Rotation")]
-    public float rotationSpeed = 360f;
-    public Vector3 rotationAxis = Vector3.up;
-    
-    [Header("Player Trigger")]
-    public float triggerRadius = 1.5f;
-    
-    [Header("Ignore Owner")]
-    public float ignoreOwnerTime = 0.3f;
-    
-    [Header("Target")]
-    public int targetPlayerId = -1;
-    public bool useDirectTarget = true;
-    public Vector3 initialTargetPosition;
-    
-    // FishNet 4.x SyncVar
-    public readonly SyncVar<GameObject> owner = new SyncVar<GameObject>();
-    
-    private Rigidbody rb;
-    private SphereCollider triggerCollider;
-    private SphereCollider physicsCollider;
-    private bool hasExploded = false;
-    private Vector3 currentTargetPosition;
-    private float checkInterval = 0.05f;
-    private float lastCheckTime = 0f;
-    private bool collisionsIgnored = false;
-    
-    public override void OnStartNetwork()
+    public class FireballProjectile : MonoBehaviour
     {
-        base.OnStartNetwork();
+        [Header("Settings")]
+        public float speed = 40f;
+        public float damage = 50f;
+        public float lifeTime = 3f;
         
-        rb = GetComponent<Rigidbody>();
+        [Header("Rocket Homing")]
+        public bool useHoming = true;
+        public float rotationSpeed = 2000f;
+        public bool usePrediction = true;
+        public bool usePerfectIntercept = true;
+        public float aggressiveChase = 1.5f;
         
-
-        // Создаем триггер для игроков
-        triggerCollider = gameObject.AddComponent<SphereCollider>();
-        triggerCollider.isTrigger = true;
-        triggerCollider.radius = triggerRadius;
+        [Header("Height Constraint")]
+        [Tooltip("Минимальная высота полета (не втыкается в землю)")]
+        public float minAimHeight = 0.5f;
+        [Tooltip("Максимальный угол падения (0 = горизонтально, -1 = вниз)")]
+        public float minDirectionY = -0.3f; // Не лететь слишком круто вниз
         
-        // Создаем физический коллайдер для стен
-        physicsCollider = gameObject.AddComponent<SphereCollider>();
-        physicsCollider.isTrigger = false;
-        physicsCollider.radius = 0.5f;
+        [Header("Ignore Owner")]
+        public float ignoreOwnerTime = 0.3f;
         
-        // Игнорируем столкновения с владельцем временно
-        if (owner.Value != null)
+        [Header("Effects")]
+        public GameObject impactEffect;
+        
+        private GameObject owner;
+        private float projectileSpeed;
+        private int projectileDamage;
+        private Rigidbody rb;
+        private bool hasExploded = false;
+        private bool collisionsIgnored = false;
+        private Transform targetTransform;
+        private bool hasTarget = false;
+        
+        private void Awake()
         {
-            IgnoreOwnerCollisions(true);
-            StartCoroutine(EnableOwnerCollisionsAfterDelay());
-        }
-        
-        currentTargetPosition = initialTargetPosition;
-        
-        // Применяем урон из настроек если доступно
-        if (base.IsServerInitialized && GameSettings.Instance != null)
-        {
-            damage = GameSettings.Instance.GetDamage();
-            Debug.Log($"[Fireball] Damage set from GameSettings: {damage}");
-        }
-        
-        // Запускаем снаряд ТОЛЬКО на сервере (физика сервера авторитетна)
-        if (rb != null && base.IsServerInitialized)
-        {
-            Vector3 direction = (currentTargetPosition - transform.position).normalized;
-            rb.linearVelocity = direction * speed;
-            Debug.Log($"[Fireball] Launched! Speed: {speed}, Damage: {damage}, Direction: {direction}");
-        }
-        
-        if (base.IsServerInitialized)
-        {
-            Invoke(nameof(DestroyFireball), lifeTime);
-        }
-    }
-    
-    private void IgnoreOwnerCollisions(bool ignore)
-    {
-        if (owner.Value == null) return;
-        
-        Collider[] ownerColliders = owner.Value.GetComponentsInChildren<Collider>();
-        Collider[] projectileColliders = GetComponentsInChildren<Collider>();
-        
-        foreach (var ownerCollider in ownerColliders)
-        {
-            if (ownerCollider == null || ownerCollider.isTrigger) continue;
+            rb = GetComponent<Rigidbody>();
             
-            foreach (var projectileCollider in projectileColliders)
+            var trigger = gameObject.AddComponent<SphereCollider>();
+            trigger.isTrigger = true;
+            trigger.radius = 1.5f;
+            
+            var phys = gameObject.AddComponent<SphereCollider>();
+            phys.isTrigger = false;
+            phys.radius = 0.5f;
+        }
+        
+        private void Start()
+        {
+            if (owner != null)
             {
-                if (projectileCollider == null) continue;
-                
-                Physics.IgnoreCollision(projectileCollider, ownerCollider, ignore);
+                IgnoreOwnerCollisions(true);
+                StartCoroutine(EnableOwnerCollisionsAfterDelay());
+            }
+            
+            if (rb != null)
+                rb.linearVelocity = transform.forward * projectileSpeed;
+            
+            Invoke(nameof(DestroyProjectile), lifeTime);
+        }
+        
+        public void Initialize(float speed, int damage, GameObject owner)
+        {
+            this.projectileSpeed = speed;
+            this.projectileDamage = damage;
+            this.owner = owner;
+        }
+        
+        public void SetTarget(Transform target)
+        {
+            this.targetTransform = target;
+            this.hasTarget = target != null;
+        }
+        
+        private void FixedUpdate()
+        {
+            if (hasExploded) return;
+            
+            if (hasTarget && targetTransform != null && useHoming)
+            {
+                UpdateRocketHoming();
+            }
+            
+            if (rb != null && !rb.isKinematic)
+            {
+                rb.linearVelocity = transform.forward * projectileSpeed;
             }
         }
         
-        collisionsIgnored = ignore;
-    }
-    
-    private IEnumerator EnableOwnerCollisionsAfterDelay()
-    {
-        yield return new WaitForSeconds(ignoreOwnerTime);
-        
-        if (owner.Value != null)
+        private void UpdateRocketHoming()
         {
-            IgnoreOwnerCollisions(false);
-        }
-    }
-    
-    private void FixedUpdate()
-    {
-        // Коррекция траектории для автонаведения
-        // Не меняем velocity если rigidbody kinematic (например, когда подобран тотем)
-        if (!useDirectTarget && targetPlayerId != -1 && rb != null && !rb.isKinematic)
-        {
-            Transform targetTransform = MagicianClass.GetPlayerTransform(targetPlayerId);
-            if (targetTransform != null)
+            if (targetTransform == null) 
             {
-                currentTargetPosition = targetTransform.position + Vector3.up * 1f;
+                hasTarget = false;
+                return;
+            }
+            
+            Vector3 targetPos = targetTransform.position + Vector3.up * 1.2f;
+            Vector3 targetVel = GetTargetVelocity();
+            
+            Vector3 aimPoint;
+            
+            if (usePerfectIntercept && usePrediction)
+            {
+                aimPoint = CalculateInterceptPoint(targetPos, targetVel);
+            }
+            else if (usePrediction)
+            {
+                float distance = Vector3.Distance(transform.position, targetPos);
+                float timeToTarget = distance / projectileSpeed;
+                aimPoint = targetPos + targetVel * timeToTarget;
+            }
+            else
+            {
+                aimPoint = targetPos;
+            }
+            
+            // ИСПРАВЛЕНО: Ограничение высоты - не целиться ниже minAimHeight
+            if (aimPoint.y < minAimHeight)
+            {
+                aimPoint.y = minAimHeight;
+            }
+            
+            Vector3 direction = (aimPoint - transform.position).normalized;
+            
+            // ИСПРАВЛЕНО: Дополнительная защита - не лететь слишком круто вниз
+            if (direction.y < minDirectionY)
+            {
+                direction.y = minDirectionY;
+                direction.Normalize();
+            }
+            
+            if (direction != Vector3.zero)
+            {
+                Quaternion targetRotation = Quaternion.LookRotation(direction);
                 
-                Vector3 toTarget = (currentTargetPosition - transform.position);
+                float angleToTarget = Vector3.Angle(transform.forward, direction);
+                float actualRotationSpeed = (angleToTarget > 90f) ? rotationSpeed * aggressiveChase : rotationSpeed;
                 
-                if (toTarget.magnitude > 0.1f)
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation, 
+                    targetRotation, 
+                    actualRotationSpeed * Time.fixedDeltaTime
+                );
+            }
+            
+            Debug.DrawLine(transform.position, aimPoint, Color.cyan, 0.1f);
+            Debug.DrawRay(transform.position, transform.forward * 5f, Color.red, 0.1f);
+        }
+        
+        private Vector3 CalculateInterceptPoint(Vector3 targetPos, Vector3 targetVel)
+        {
+            Vector3 toTarget = targetPos - transform.position;
+            
+            if (targetVel.sqrMagnitude < 0.01f)
+                return targetPos;
+            
+            float a = Vector3.Dot(targetVel, targetVel) - (projectileSpeed * projectileSpeed);
+            float b = 2f * Vector3.Dot(toTarget, targetVel);
+            float c = Vector3.Dot(toTarget, toTarget);
+            
+            float discriminant = b * b - 4f * a * c;
+            
+            if (discriminant < 0)
+            {
+                float distance = toTarget.magnitude;
+                float timeToTarget = distance / projectileSpeed;
+                return targetPos + targetVel * timeToTarget * aggressiveChase;
+            }
+            
+            float sqrtDisc = Mathf.Sqrt(discriminant);
+            float t1 = (-b + sqrtDisc) / (2f * a);
+            float t2 = (-b - sqrtDisc) / (2f * a);
+            
+            float t = Mathf.Max(t1, t2);
+            
+            if (t < 0)
+                return targetPos;
+            
+            return targetPos + targetVel * t;
+        }
+        
+        private Vector3 GetTargetVelocity()
+        {
+            if (targetTransform == null) return Vector3.zero;
+            
+            Rigidbody targetRb = targetTransform.GetComponent<Rigidbody>();
+            if (targetRb != null) return targetRb.linearVelocity;
+            
+            CharacterController cc = targetTransform.GetComponent<CharacterController>();
+            if (cc != null) return cc.velocity;
+            
+            return Vector3.zero;
+        }
+        
+        private IEnumerator EnableOwnerCollisionsAfterDelay()
+        {
+            yield return new WaitForSeconds(ignoreOwnerTime);
+            if (owner != null) IgnoreOwnerCollisions(false);
+        }
+        
+        private void IgnoreOwnerCollisions(bool ignore)
+        {
+            if (owner == null) return;
+            Collider[] ownerColliders = owner.GetComponentsInChildren<Collider>();
+            Collider[] projectileColliders = GetComponentsInChildren<Collider>();
+            
+            foreach (var oc in ownerColliders)
+            {
+                if (oc == null || oc.isTrigger) continue;
+                foreach (var pc in projectileColliders)
                 {
-                    Vector3 desiredDirection = toTarget.normalized;
-                    Vector3 currentDirection = rb.linearVelocity.normalized;
-                    
-                    Vector3 newDirection = Vector3.RotateTowards(
-                        currentDirection, 
-                        desiredDirection, 
-                        0.5f * Time.fixedDeltaTime, 
-                        0f
-                    );
-                    
-                    rb.linearVelocity = newDirection * speed;
+                    if (pc == null) continue;
+                    Physics.IgnoreCollision(pc, oc, ignore);
+                }
+            }
+            collisionsIgnored = ignore;
+        }
+        
+        private void OnTriggerEnter(Collider other)
+        {
+            if (hasExploded) return;
+            if (other.gameObject == owner && collisionsIgnored) return;
+            
+            if (other.gameObject != owner && (other.CompareTag("Player") || other.CompareTag("Enemy")))
+            {
+                ApplyDamage(other.gameObject);
+                Explode();
+            }
+        }
+        
+        private void OnCollisionEnter(Collision collision)
+        {
+            if (hasExploded) return;
+            GameObject hit = collision.gameObject;
+            
+            if (hit != owner && !hit.CompareTag("Player") && !hit.CompareTag("Enemy") && !hit.CompareTag("Projectile"))
+            {
+                Explode();
+            }
+            else if (hit == owner && !collisionsIgnored)
+            {
+                ApplyDamage(hit);
+                Explode();
+            }
+        }
+        
+        private void ApplyDamage(GameObject target)
+        {
+            HealthSystem health = target.GetComponent<HealthSystem>();
+            if (health != null)
+            {
+                health.TakeDamage(projectileDamage, owner);
+                if (health.IsDead && owner != null)
+                {
+                    var score = owner.GetComponent<PlayerScore>();
+                    if (score != null) score.OnKillEnemy(target);
                 }
             }
         }
-    }
-    
-    private void Update()
-    {
-        transform.Rotate(rotationAxis * rotationSpeed * Time.deltaTime, Space.Self);
         
-        // Проверка столкновений с игроками (только на сервере)
-        if (base.IsServerInitialized && Time.time - lastCheckTime > checkInterval)
+        private void Explode()
         {
-            CheckForPlayerCollisions();
-            lastCheckTime = Time.time;
+            if (hasExploded) return;
+            hasExploded = true;
+            if (impactEffect != null)
+                Instantiate(impactEffect, transform.position, Quaternion.identity);
+            DestroyProjectile();
         }
-    }
-    
-    private void CheckForPlayerCollisions()
-    {
-        if (hasExploded) return;
         
-        Collider[] hitColliders = Physics.OverlapSphere(transform.position, triggerRadius);
-        foreach (var collider in hitColliders)
+        private void DestroyProjectile()
         {
-            if (collider.gameObject == owner.Value && collisionsIgnored) continue;
-            
-            if (collider.gameObject != owner.Value && collider.CompareTag("Player"))
-            {
-                HealthSystem health = collider.GetComponent<HealthSystem>();
-                if (health != null)
-                {
-                    health.TakeDamage(damage, owner.Value);
-                    Debug.Log($"Fireball hit {collider.gameObject.name} (OverlapSphere)");
-                    Explode();
-                    return;
-                }
-            }
-        }
-    }
-    
-    // Триггер для Character Controller
-    private void OnTriggerEnter(Collider other)
-    {
-        if (!base.IsServerInitialized || hasExploded) return;
-        
-        if (other.gameObject == owner.Value && collisionsIgnored) return;
-        
-        if (other.gameObject != owner.Value && other.CompareTag("Player"))
-        {
-            HealthSystem health = other.GetComponent<HealthSystem>();
-            if (health != null)
-            {
-                health.TakeDamage(damage, owner.Value);
-                Debug.Log($"Fireball hit {other.gameObject.name} (Trigger)");
-            }
-            Explode();
-        }
-    }
-    
-    private void OnCollisionEnter(Collision collision)
-    {
-        if (!base.IsServerInitialized || hasExploded) return;
-        
-        GameObject hitObject = collision.gameObject;
-        
-        // Если попали в стену или окружение
-        if (hitObject != owner.Value && !hitObject.CompareTag("Player") && !hitObject.CompareTag("Projectile"))
-        {
-            Debug.Log($"Fireball collided with {hitObject.name}");
-            Explode();
-        }
-        else if (hitObject == owner.Value && !collisionsIgnored)
-        {
-            // Если время игнорирования прошло и фаербол вернулся к владельцу
-            HealthSystem health = hitObject.GetComponent<HealthSystem>();
-            if (health != null)
-            {
-                health.TakeDamage(damage, owner.Value);
-                Debug.Log($"Fireball returned and hit owner {hitObject.name}");
-            }
-            Explode();
-        }
-    }
-    
-    private void Explode()
-    {
-        if (hasExploded) return;
-        
-        hasExploded = true;
-        
-        if (base.IsServerInitialized)
-            DestroyFireball();
-    }
-    
-    [Server]
-    private void DestroyFireball()
-    {
-        base.ServerManager.Despawn(gameObject);
-    }
-    
-    private void OnDrawGizmos()
-    {
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawWireSphere(transform.position, triggerRadius);
-        
-        if (owner.Value != null && collisionsIgnored)
-        {
-            Gizmos.color = Color.red;
-            Gizmos.DrawLine(transform.position, owner.Value.transform.position);
+            Destroy(gameObject);
         }
     }
 }

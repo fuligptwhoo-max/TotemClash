@@ -1,106 +1,115 @@
 using UnityEngine;
 using TMPro;
-using FishNet.Object;
 using System.Collections;
+using TotemClash.Combat;
 
-/// <summary>
-/// Отображает очки локального игрока под таймером
-/// </summary>
-public class LocalScoreDisplay : MonoBehaviour
+namespace TotemClash.UI
 {
-    [Header("UI")]
-    public TMP_Text scoreText;
-    
-    [Header("Format")]
-    public string format = "Очки: {0}";
-    
-    [Header("Debug")]
-    public bool debugMode = false;
-    
-    private PlayerScore localPlayerScore;
-    private int lastScore = -1;
-    
-    private void Start()
+    public class LocalScoreDisplay : MonoBehaviour
     {
-        if (scoreText == null)
-            scoreText = GetComponent<TMP_Text>();
+        [Header("UI")]
+        public TMP_Text scoreText;
         
-        if (scoreText == null)
+        [Header("Format")]
+        public string format = "Очки: {0}";
+        
+        private PlayerScore localPlayerScore;
+        
+        private void Start()
         {
-            Debug.LogError("[LocalScoreDisplay] TMP_Text не найден!");
-            enabled = false;
-            return;
-        }
-        
-        // Показываем начальное значение
-        UpdateDisplay(0);
-        
-        // Запускаем поиск игрока с задержкой
-        StartCoroutine(SearchForPlayerCoroutine());
-    }
-    
-    private IEnumerator SearchForPlayerCoroutine()
-    {
-        // Ждём пока сеть инициализируется и игрок спавнится
-        float waitTime = 0f;
-        float maxWaitTime = 10f; // Максимум 10 секунд ждём
-        
-        while (waitTime < maxWaitTime)
-        {
-            FindLocalPlayer();
+            if (scoreText == null)
+                scoreText = GetComponent<TMP_Text>();
             
-            if (localPlayerScore != null)
+            if (scoreText == null)
             {
-                yield break; // Нашли - выходим
-            }
-            
-            waitTime += 0.5f;
-            yield return new WaitForSeconds(0.5f);
-        }
-        
-        Debug.LogWarning("[LocalScoreDisplay] Could not find local player after 10 seconds");
-    }
-    
-    private void Update()
-    {
-        if (localPlayerScore == null) return;
-        
-        int currentScore = localPlayerScore.GetScore();
-        if (currentScore != lastScore)
-        {
-            lastScore = currentScore;
-            UpdateDisplay(currentScore);
-            
-            if (debugMode)
-                Debug.Log($"[LocalScoreDisplay] Score updated: {currentScore}");
-        }
-    }
-    
-    private void FindLocalPlayer()
-    {
-        PlayerScore[] allPlayers = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
-        
-        if (debugMode)
-            Debug.Log($"[LocalScoreDisplay] Found {allPlayers.Length} players total");
-        
-        foreach (PlayerScore playerScore in allPlayers)
-        {
-            NetworkObject netObj = playerScore.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsOwner)
-            {
-                localPlayerScore = playerScore;
-                Debug.Log($"[LocalScoreDisplay] Found local player: {playerScore.GetPlayerName()}, Score: {playerScore.GetScore()}");
-                UpdateDisplay(localPlayerScore.GetScore());
+                Debug.LogError("[LocalScoreDisplay] TMP_Text не найден!");
+                enabled = false;
                 return;
             }
+            
+            UpdateDisplay(0);
+            StartCoroutine(SearchForPlayerCoroutine());
         }
-    }
-    
-    private void UpdateDisplay(int score)
-    {
-        if (scoreText != null)
+        
+        private IEnumerator SearchForPlayerCoroutine()
         {
-            scoreText.text = string.Format(format, score);
+            yield return new WaitForSeconds(0.5f); // Ждём спавн
+            
+            FindLocalPlayer();
+            
+            if (localPlayerScore == null)
+            {
+                yield return new WaitForSeconds(1f);
+                FindLocalPlayer();
+            }
+        }
+        
+        private void FindLocalPlayer()
+        {
+            if (localPlayerScore != null) return; // Уже нашли
+            
+            // Ищем по тегу
+            GameObject player = GameObject.FindGameObjectWithTag("Player");
+            if (player != null)
+            {
+                PlayerScore score = player.GetComponent<PlayerScore>();
+                if (score != null && !score.IsBot())
+                {
+                    SetPlayerScore(score);
+                    return;
+                }
+            }
+            
+            // Fallback - ищем среди всех
+            PlayerScore[] allPlayers = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
+            foreach (PlayerScore playerScore in allPlayers)
+            {
+                if (!playerScore.IsBot())
+                {
+                    SetPlayerScore(playerScore);
+                    return;
+                }
+            }
+        }
+        
+        private void SetPlayerScore(PlayerScore score)
+        {
+            if (score == null || score == localPlayerScore) return;
+            
+            // Отписываемся от старого если был
+            if (localPlayerScore != null)
+            {
+                localPlayerScore.onScoreChanged.RemoveListener(OnScoreChanged);
+            }
+            
+            localPlayerScore = score;
+            localPlayerScore.onScoreChanged.AddListener(OnScoreChanged);
+            
+            // Обновляем сразу
+            OnScoreChanged(localPlayerScore.GetScore());
+            
+            Debug.Log($"[LocalScoreDisplay] Connected to {localPlayerScore.GetPlayerName()}, score: {localPlayerScore.GetScore()}");
+        }
+        
+        private void OnScoreChanged(int newScore)
+        {
+            UpdateDisplay(newScore);
+        }
+        
+        private void UpdateDisplay(int score)
+        {
+            if (scoreText != null)
+            {
+                scoreText.text = string.Format(format, score);
+            }
+        }
+        
+        private void OnDestroy()
+        {
+            if (localPlayerScore != null)
+            {
+                localPlayerScore.onScoreChanged.RemoveListener(OnScoreChanged);
+            }
         }
     }
 }

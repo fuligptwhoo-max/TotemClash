@@ -1,552 +1,377 @@
 using UnityEngine;
 using TMPro;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
-using FishNet.Managing;
-using System.Collections.Generic;
+using UnityEngine.Events;
+using TotemClash.UI;
+using TotemClash.Network;
 
-/// <summary>
-/// GameManager - центральный менеджер игры
-/// Синхронизирует время и состояние игры между всеми клиентами
-/// </summary>
-public class GameManager : NetworkBehaviour
+namespace TotemClash.Combat
 {
-    public static GameManager Instance { get; private set; }
-    
-    [Header("Game Settings")]
-    public float gameTime = 300f;
-    
-    [Header("UI")]
-    public TMP_Text timerText;
-    public TMP_Text globalScoreText; // Общий счёт команды (опционально)
-    
-    [Header("References")]
-    public TotemController totem;
-    public CountdownDisplay countdownDisplay;
-    public GameOverMenu gameOverMenu;
-    
-    // SyncVar для синхронизации
-    public readonly SyncVar<float> syncCurrentTime = new SyncVar<float>(300f);
-    public readonly SyncVar<int> syncTotalScore = new SyncVar<int>(0);
-    public readonly SyncVar<bool> syncGameActive = new SyncVar<bool>(false);
-    public readonly SyncVar<bool> syncGameEnded = new SyncVar<bool>(false);
-    
-    private bool isGameActive = false;
-    private bool gameEnded = false;
-    private float currentTime;
-    private int totalScore = 0;
-    private float carrierScoreAccumulator = 0f;
-    
-    private void Awake()
+    public class GameManager : MonoBehaviour
     {
-        if (Instance == null)
-        {
-            Instance = this;
-        }
-        else
-        {
-            Destroy(gameObject);
-        }
-    }
-    
-    public override void OnStartNetwork()
-    {
-        base.OnStartNetwork();
+        public static GameManager Instance { get; private set; }
         
-        syncCurrentTime.OnChange += OnTimeChanged;
-        syncTotalScore.OnChange += OnScoreChanged;
-        syncGameActive.OnChange += OnGameActiveChanged;
-        syncGameEnded.OnChange += OnGameEndedChanged;
+        [Header("Game Settings")]
+        public float gameTime = 300f;
         
-        if (base.IsServerInitialized)
+        [Header("UI")]
+        public TMP_Text timerText;
+        public TMP_Text globalScoreText;
+        public TMP_Text warningText; // ИСПРАВЛЕНО: Текст для предупреждений
+        
+        [Header("References")]
+        public TotemController totem;
+        public CountdownDisplay countdownDisplay;
+        public GameOverMenu gameOverMenu;
+        
+        private float currentTime;
+        private int totalScore = 0;
+        private bool isGameActive = false;
+        private bool gameEnded = false;
+        private float carrierScoreAccumulator = 0f;
+        private float originalGameTime = 300f; // ИСПРАВЛЕНО: Храним изначальное время
+        
+        [Header("Events")]
+        public UnityEvent<float> OnTimeChanged;
+        public UnityEvent<int> OnScoreChanged;
+        public UnityEvent OnGameStarted;
+        public UnityEvent OnGameEnded;
+        
+        private void Awake()
         {
-            // Применяем настройки из GameSettings
-            if (GameSettings.Instance != null)
+            if (Instance == null)
             {
-                gameTime = GameSettings.Instance.GetGameTime();
-            }
-            
-            syncCurrentTime.Value = gameTime;
-            syncTotalScore.Value = 0;
-            syncGameActive.Value = false;
-            syncGameEnded.Value = false;
-        }
-        
-        currentTime = syncCurrentTime.Value;
-        totalScore = syncTotalScore.Value;
-    }
-    
-    public override void OnStopNetwork()
-    {
-        base.OnStopNetwork();
-        
-        syncCurrentTime.OnChange -= OnTimeChanged;
-        syncTotalScore.OnChange -= OnScoreChanged;
-        syncGameActive.OnChange -= OnGameActiveChanged;
-        syncGameEnded.OnChange -= OnGameEndedChanged;
-    }
-    
-    private void OnTimeChanged(float prev, float next, bool asServer)
-    {
-        currentTime = next;
-        UpdateTimerUI();
-    }
-    
-    private void OnScoreChanged(int prev, int next, bool asServer)
-    {
-        totalScore = next;
-        UpdateScoreUI();
-    }
-    
-    private void OnGameActiveChanged(bool prev, bool next, bool asServer)
-    {
-        isGameActive = next;
-    }
-    
-    private void OnGameEndedChanged(bool prev, bool next, bool asServer)
-    {
-        gameEnded = next;
-        if (next)
-        {
-            OnGameEnded();
-        }
-    }
-    
-    private void Start()
-    {
-        // Находим UI если не назначены
-        if (timerText == null)
-            timerText = GameObject.Find("TimerText")?.GetComponent<TMP_Text>();
-        
-        // Находим компоненты если не назначены
-        if (countdownDisplay == null)
-            countdownDisplay = FindFirstObjectByType<CountdownDisplay>();
-        if (gameOverMenu == null)
-            gameOverMenu = FindFirstObjectByType<GameOverMenu>();
-        
-        FindTotem();
-        
-        // Запускаем обратный отсчёт через CountdownDisplay
-        if (base.IsServerInitialized && countdownDisplay != null)
-        {
-            // Спавним ожидающих игроков (которые подключились в лобби)
-            if (MyNetworkManager.Instance != null)
-            {
-                MyNetworkManager.Instance.SpawnPendingPlayers();
-            }
-            
-            countdownDisplay.StartCountdown();
-            
-            // Запускаем игру после отсчёта
-            StartCoroutine(StartGameAfterCountdown());
-        }
-        
-        UpdateTimerUI();
-        UpdateScoreUI();
-    }
-    
-    private System.Collections.IEnumerator StartGameAfterCountdown()
-    {
-        // Ждём пока закончится отсчёт
-        yield return new WaitForSeconds(countdownDisplay.countdownDuration + 1f);
-        
-        // Запускаем игру
-        syncGameActive.Value = true;
-        
-        // Применяем настройки к существующим игрокам
-        ApplyGameSettings();
-        
-        Debug.Log("[GameManager] Game started!");
-    }
-    
-    public override void OnStartClient()
-    {
-        base.OnStartClient();
-        
-        // На клиенте применяем настройки когда они изменяются
-        if (GameSettings.Instance != null)
-        {
-            GameSettings.Instance.GameTime.OnChange += OnGameTimeSettingChanged;
-            GameSettings.Instance.PlayerSpeed.OnChange += OnPlayerSpeedSettingChanged;
-            GameSettings.Instance.ProjectileSpeed.OnChange += OnProjectileSpeedSettingChanged;
-            GameSettings.Instance.DamagePerHit.OnChange += OnDamageSettingChanged;
-        }
-    }
-    
-    public override void OnStopClient()
-    {
-        base.OnStopClient();
-        
-        if (GameSettings.Instance != null)
-        {
-            GameSettings.Instance.GameTime.OnChange -= OnGameTimeSettingChanged;
-            GameSettings.Instance.PlayerSpeed.OnChange -= OnPlayerSpeedSettingChanged;
-            GameSettings.Instance.ProjectileSpeed.OnChange -= OnProjectileSpeedSettingChanged;
-            GameSettings.Instance.DamagePerHit.OnChange -= OnDamageSettingChanged;
-        }
-    }
-    
-    private void OnGameTimeSettingChanged(float prev, float next, bool asServer)
-    {
-        if (asServer)
-        {
-            // На сервере обновляем текущее время игры
-            gameTime = next;
-            // Если игра активна, добавляем разницу к текущему времени
-            if (isGameActive && !gameEnded)
-            {
-                float diff = next - prev;
-                syncCurrentTime.Value += diff;
-                Debug.Log($"[GameManager] GameTime setting changed on server: {prev} -> {next}, adjusted current time by {diff}");
+                Instance = this;
+                DontDestroyOnLoad(gameObject);
             }
             else
             {
-                // Если игра не активна, просто обновляем начальное время
-                syncCurrentTime.Value = next;
-                Debug.Log($"[GameManager] GameTime setting updated on server: {next}");
+                Destroy(gameObject);
             }
         }
-        else
-        {
-            gameTime = next;
-            Debug.Log($"[GameManager] GameTime setting updated on client: {next}");
-        }
-    }
-    
-    private void OnPlayerSpeedSettingChanged(float prev, float next, bool asServer)
-    {
-        if (asServer)
-        {
-            // На сервере применяем к всем игрокам
-            ApplyGameSettings();
-            Debug.Log($"[GameManager] PlayerSpeed setting updated on server: {next}");
-        }
-        else
-        {
-            // Применяем скорость к локальному игроку
-            ApplyGameSettings();
-            Debug.Log($"[GameManager] PlayerSpeed setting updated on client: {next}");
-        }
-    }
-    
-    private void OnProjectileSpeedSettingChanged(float prev, float next, bool asServer)
-    {
-        Debug.Log($"[GameManager] ProjectileSpeed setting changed: {prev} -> {next} (asServer: {asServer})");
-        // ProjectileSpeed применяется к новым снарядам при их создании
-        // Нет необходимости обновлять существующие снаряды
-    }
-    
-    private void OnDamageSettingChanged(int prev, int next, bool asServer)
-    {
-        Debug.Log($"[GameManager] Damage setting changed: {prev} -> {next} (asServer: {asServer})");
-        // Damage применяется при попадании снаряда
-        // Нет необходимости обновлять существующие снаряды
-    }
-    
-    /// <summary>
-    /// Применяет настройки из GameSettings к игрокам
-    /// </summary>
-    private void ApplyGameSettings()
-    {
-        if (GameSettings.Instance == null) 
-        {
-            Debug.LogWarning("[GameManager] Cannot apply settings - GameSettings.Instance is null!");
-            return;
-        }
         
-        float playerSpeed = GameSettings.Instance.GetPlayerSpeed();
-        float gameTimeSetting = GameSettings.Instance.GetGameTime();
-        
-        Debug.Log($"[GameManager] Applying settings: PlayerSpeed={playerSpeed}, GameTime={gameTimeSetting}");
-        
-        var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
-        Debug.Log($"[GameManager] Found {players.Length} players to apply settings");
-        
-        foreach (var player in players)
+        private void Start()
         {
-            player.moveSpeed = playerSpeed;
-            Debug.Log($"[GameManager] Applied speed {playerSpeed} to player {player.name}");
-        }
-        
-        // Обновляем время игры
-        if (base.IsServerInitialized)
-        {
-            syncCurrentTime.Value = gameTimeSetting;
-        }
-        
-        Debug.Log("[GameManager] Game settings applied to players");
-    }
-    
-    private void Update()
-    {
-        // Обновляем время только на сервере
-        if (isGameActive && !gameEnded && base.IsServerInitialized)
-        {
-            UpdateGameTime();
-            UpdateScoreFromTotem();
-        }
-    }
-    
-    private void UpdateGameTime()
-    {
-        syncCurrentTime.Value -= Time.deltaTime;
-        
-        if (syncCurrentTime.Value <= 0f)
-        {
-            syncCurrentTime.Value = 0f;
-            syncGameActive.Value = false;
-            syncGameEnded.Value = true;
-        }
-    }
-    
-    private void UpdateScoreFromTotem()
-    {
-        if (totem == null || !totem.IsBeingCarried())
-        {
-            carrierScoreAccumulator = 0f;
-            return;
-        }
-        
-        carrierScoreAccumulator += totem.GetCarryMultiplier() * Time.deltaTime;
-        
-        if (carrierScoreAccumulator >= 1f)
-        {
-            int pointsToAdd = Mathf.FloorToInt(carrierScoreAccumulator);
-            carrierScoreAccumulator -= pointsToAdd;
+            if (timerText == null)
+                timerText = GameObject.Find("TimerText")?.GetComponent<TMP_Text>();
             
-            int carrierId = totem.GetCarrierId();
-            AddScoreToPlayer(carrierId, pointsToAdd);
-        }
-    }
-    
-    [Server]
-    private void AddScoreToPlayer(int playerId, int points)
-    {
-        var players = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
-        foreach (var playerScore in players)
-        {
-            // Ищем по ObjectId (как в TotemController)
-            if (playerScore.ObjectId == playerId)
+            if (countdownDisplay == null)
+                countdownDisplay = FindFirstObjectByType<CountdownDisplay>();
+            if (gameOverMenu == null)
+                gameOverMenu = FindFirstObjectByType<GameOverMenu>();
+            
+            FindTotem();
+            
+            ApplyGameTimeSettings();
+            
+            currentTime = gameTime;
+            originalGameTime = gameTime; // ИСПРАВЛЕНО: Сохраняем оригинальное время
+            totalScore = 0;
+            isGameActive = false;
+            gameEnded = false;
+            
+            if (countdownDisplay != null)
             {
-                playerScore.AddScore(points);
-                Debug.Log($"[GameManager] Added {points} points to player {playerScore.GetPlayerName()} (ObjectId: {playerId})");
+                countdownDisplay.StartCountdown();
+                StartCoroutine(StartGameAfterCountdown());
+            }
+            else
+            {
+                StartGame();
+            }
+            
+            UpdateTimerUI();
+            UpdateScoreUI();
+            
+            if (GameSettings.Instance != null)
+            {
+                GameSettings.Instance.OnGameTimeChanged.AddListener(OnGameTimeSettingChanged);
+            }
+        }
+        
+        private void OnDestroy()
+        {
+            if (GameSettings.Instance != null)
+            {
+                GameSettings.Instance.OnGameTimeChanged.RemoveListener(OnGameTimeSettingChanged);
+            }
+        }
+        
+        private void ApplyGameTimeSettings()
+        {
+            if (GameSettings.Instance != null)
+            {
+                gameTime = GameSettings.Instance.GetGameTime();
+                originalGameTime = gameTime;
+                Debug.Log($"[GameManager] Applied game time from settings: {gameTime}");
+            }
+        }
+        
+        // ИСПРАВЛЕНО: Обработка изменения времени с проверкой
+        private void OnGameTimeSettingChanged(float newTime)
+        {
+            // Если игра активна - проверяем, не меньше ли новое время текущего
+            if (isGameActive && !gameEnded)
+            {
+                float elapsedTime = originalGameTime - currentTime; // Сколько времени прошло
+                
+                if (newTime < elapsedTime)
+                {
+                    // Новое время меньше, чем уже прошло - показываем предупреждение
+                    ShowWarning($"Введенное время ({FormatTime(newTime)}) меньше прошедшего ({FormatTime(elapsedTime)})!");
+                    Debug.LogWarning($"[GameManager] Cannot set time to {newTime}, already elapsed {elapsedTime}");
+                    return; // Не применяем изменение
+                }
+                
+                // Применяем новое время: прошедшее время остается, меняется общее
+                gameTime = newTime;
+                currentTime = newTime - elapsedTime;
+                originalGameTime = newTime; // Обновляем оригинальное время
+                
+                Debug.Log($"[GameManager] Game time updated to: {newTime}, elapsed: {elapsedTime}, current: {currentTime}");
+            }
+            else if (!isGameActive && !gameEnded)
+            {
+                // Игра не началась - просто меняем время
+                gameTime = newTime;
+                currentTime = newTime;
+                originalGameTime = newTime;
+                Debug.Log($"[GameManager] Game time set to: {newTime} (game not started)");
+            }
+            
+            UpdateTimerUI();
+        }
+        
+        // ИСПРАВЛЕНО: Показать предупреждение
+        private void ShowWarning(string message)
+        {
+            if (warningText != null)
+            {
+                warningText.text = message;
+                warningText.gameObject.SetActive(true);
+                
+                // Автоматически скрываем через 3 секунды
+                CancelInvoke(nameof(HideWarning));
+                Invoke(nameof(HideWarning), 3f);
+            }
+            else
+            {
+                Debug.LogWarning($"[GameManager] Warning: {message}");
+            }
+        }
+        
+        private void HideWarning()
+        {
+            if (warningText != null)
+            {
+                warningText.gameObject.SetActive(false);
+            }
+        }
+        
+        // ИСПРАВЛЕНО: Форматирование времени
+        private string FormatTime(float timeInSeconds)
+        {
+            int minutes = Mathf.FloorToInt(timeInSeconds / 60);
+            int seconds = Mathf.FloorToInt(timeInSeconds % 60);
+            return $"{minutes:00}:{seconds:00}";
+        }
+        
+        private System.Collections.IEnumerator StartGameAfterCountdown()
+        {
+            yield return new WaitForSeconds(countdownDisplay.countdownDuration + 1f);
+            StartGame();
+            Debug.Log("[GameManager] Game started!");
+        }
+        
+        private void Update()
+        {
+            if (isGameActive && !gameEnded)
+            {
+                UpdateGameTime();
+                UpdateScoreFromTotem();
+            }
+        }
+        
+        private void UpdateGameTime()
+        {
+            float previousTime = currentTime;
+            currentTime -= Time.deltaTime;
+            
+            if (currentTime <= 0f)
+            {
+                currentTime = 0f;
+                EndGame();
+            }
+            
+            if (Mathf.FloorToInt(previousTime) != Mathf.FloorToInt(currentTime))
+            {
+                OnTimeChanged?.Invoke(currentTime);
+                UpdateTimerUI();
+            }
+        }
+        
+        private void UpdateScoreFromTotem()
+        {
+            if (totem == null || !totem.IsBeingCarried())
+            {
+                carrierScoreAccumulator = 0f;
                 return;
             }
-        }
-        Debug.LogWarning($"[GameManager] Could not find player with ObjectId: {playerId}");
-    }
-    
-    [Server]
-    public void AddScore(int points)
-    {
-        syncTotalScore.Value += points;
-    }
-    
-    private void UpdateTimerUI()
-    {
-        if (timerText != null)
-        {
-            int minutes = Mathf.FloorToInt(currentTime / 60);
-            int seconds = Mathf.FloorToInt(currentTime % 60);
-            timerText.text = $"{minutes:00}:{seconds:00}";
-        }
-    }
-    
-    private void UpdateScoreUI()
-    {
-        // Обновление UI общего счёта (если нужно)
-    }
-    
-    private void OnGameEnded()
-    {
-        Debug.Log("[GameManager] Game Ended!");
-        
-        // Показываем меню окончания игры
-        if (gameOverMenu != null)
-        {
-            gameOverMenu.ShowGameOver();
-        }
-    }
-    
-    private void FindTotem()
-    {
-        var totemObject = FindFirstObjectByType<TotemController>();
-        if (totemObject != null)
-        {
-            totem = totemObject;
-        }
-    }
-    
-    public void RestartGame()
-    {
-        if (!base.IsServerInitialized) return;
-        
-        // Скрываем меню окончания игры
-        if (gameOverMenu != null)
-        {
-            if (gameOverMenu.gameOverPanel != null)
-                gameOverMenu.gameOverPanel.SetActive(false);
-        }
-        
-        // Очищаем таблицу лидеров
-        if (LeaderboardManager.Instance != null)
-        {
-            LeaderboardManager.Instance.ClearAll();
-        }
-        
-        // Очищаем список спавненных игроков в NetworkManager
-        if (MyNetworkManager.Instance != null)
-        {
-            MyNetworkManager.Instance.ClearSpawnedPlayers();
-        }
-        
-        // Сбрасываем состояние
-        syncGameEnded.Value = false;
-        syncTotalScore.Value = 0;
-        syncCurrentTime.Value = gameTime;
-        
-        // Сбрасываем тотем
-        if (totem != null)
-        {
-            totem.ResetTotem();
-        }
-        
-        // Переспавниваем всех игроков на новых позициях
-        RespawnAllPlayers();
-        
-        // Снова запускаем отсчёт
-        if (countdownDisplay != null)
-        {
-            countdownDisplay.StartCountdown();
-            StartCoroutine(StartGameAfterCountdown());
-        }
-        else
-        {
-            syncGameActive.Value = true;
-        }
-        
-        Debug.Log("[GameManager] Game restarted!");
-    }
-    
-    /// <summary>
-    /// Переспавнивает всех игроков на случайных spawn point'ах
-    /// </summary>
-    private void RespawnAllPlayers()
-    {
-        var players = FindObjectsByType<NetworkPlayerController>(FindObjectsSortMode.None);
-        
-        // Создаём список занятых точек для этого цикла респавна
-        List<Transform> usedSpawnPoints = new List<Transform>();
-        
-        foreach (var player in players)
-        {
-            // Сбрасываем очки
-            var playerScore = player.GetComponent<PlayerScore>();
-            if (playerScore != null)
+            
+            carrierScoreAccumulator += totem.GetCarryMultiplier() * Time.deltaTime;
+            
+            if (carrierScoreAccumulator >= 1f)
             {
-                playerScore.ResetScore();
+                int pointsToAdd = Mathf.FloorToInt(carrierScoreAccumulator);
+                carrierScoreAccumulator -= pointsToAdd;
+                AddScore(pointsToAdd);
+            }
+        }
+        
+        public void StartGame()
+        {
+            isGameActive = true;
+            gameEnded = false;
+            currentTime = gameTime;
+            originalGameTime = gameTime; // ИСПРАВЛЕНО: Сохраняем оригинальное время
+            totalScore = 0;
+            carrierScoreAccumulator = 0f;
+            
+            OnGameStarted?.Invoke();
+            UpdateTimerUI();
+            UpdateScoreUI();
+            
+            Debug.Log("[GameManager] Game started!");
+        }
+        
+        public void EndGame()
+        {
+            if (gameEnded) return;
+            
+            isGameActive = false;
+            gameEnded = true;
+            
+            FreezeAllPlayers(true);
+            
+            OnGameEnded?.Invoke();
+            
+            if (gameOverMenu != null)
+            {
+                gameOverMenu.ShowGameOver();
             }
             
-            // Сбрасываем здоровье
-            var healthSystem = player.GetComponent<HealthSystem>();
-            if (healthSystem != null)
+            Debug.Log("[GameManager] Game Ended!");
+        }
+        
+        private void FreezeAllPlayers(bool freeze)
+        {
+            GameObject player = GameObject.FindGameObjectWithTag("Player");
+            if (player != null)
             {
-                healthSystem.ResetHealth();
-            }
-            
-            // Телепортируем на случайный spawn point
-            if (MyNetworkManager.Instance != null)
-            {
-                Transform spawnPoint = GetUniqueSpawnPoint(usedSpawnPoints);
-                if (spawnPoint != null)
+                PlayerController controller = player.GetComponent<PlayerController>();
+                if (controller != null)
                 {
-                    usedSpawnPoints.Add(spawnPoint);
-                    TeleportPlayer(player, spawnPoint.position, spawnPoint.rotation);
+                    controller.EnableControls(!freeze);
                 }
             }
-        }
-        
-        Debug.Log($"[GameManager] Respawned {players.Length} players on unique spawn points");
-    }
-    
-    /// <summary>
-    /// Получает уникальную точку спавна, которую ещё не использовали в этом раунде
-    /// </summary>
-    private Transform GetUniqueSpawnPoint(List<Transform> usedPoints)
-    {
-        if (MyNetworkManager.Instance == null) return null;
-        
-        // Получаем все доступные точки
-        var allPoints = new List<Transform>();
-        for (int i = 0; i < 10; i++) // Пробуем 10 раз
-        {
-            var point = MyNetworkManager.Instance.GetRandomSpawnPoint();
-            if (point != null && !allPoints.Contains(point))
+            
+            AIBotController[] bots = FindObjectsByType<AIBotController>(FindObjectsSortMode.None);
+            foreach (var bot in bots)
             {
-                allPoints.Add(point);
+                bot.Freeze(freeze);
             }
         }
         
-        // Ищем неиспользованную точку
-        foreach (var point in allPoints)
+        public void RestartGame()
         {
-            if (!usedPoints.Contains(point))
+            if (gameOverMenu != null)
             {
-                return point;
+                if (gameOverMenu.gameOverPanel != null)
+                    gameOverMenu.gameOverPanel.SetActive(false);
+            }
+            
+            gameEnded = false;
+            totalScore = 0;
+            carrierScoreAccumulator = 0f;
+            
+            ApplyGameTimeSettings();
+            currentTime = gameTime;
+            originalGameTime = gameTime;
+            
+            if (totem != null)
+            {
+                totem.ResetTotem();
+            }
+            
+            if (countdownDisplay != null)
+            {
+                countdownDisplay.StartCountdown();
+                StartCoroutine(StartGameAfterCountdown());
+            }
+            else
+            {
+                StartGame();
+            }
+            
+            UpdateTimerUI();
+            UpdateScoreUI();
+            
+            Debug.Log("[GameManager] Game restarted!");
+        }
+        
+        public void AddScore(int points)
+        {
+            totalScore += points;
+            OnScoreChanged?.Invoke(totalScore);
+            UpdateScoreUI();
+        }
+        
+        public float GetCurrentTime() => currentTime;
+        public bool IsGameActive() => isGameActive && !gameEnded;
+        public int GetTotalScore() => totalScore;
+        
+        public void SetGameTime(float time)
+        {
+            gameTime = time;
+            if (!isGameActive && !gameEnded)
+            {
+                currentTime = time;
+                originalGameTime = time;
+                UpdateTimerUI();
             }
         }
         
-        // Если все заняты, возвращаем любую
-        return allPoints.Count > 0 ? allPoints[0] : null;
-    }
-    
-    /// <summary>
-    /// Телепортирует игрока на новую позицию
-    /// </summary>
-    private void TeleportPlayer(NetworkPlayerController player, Vector3 position, Quaternion rotation)
-    {
-        // Отключаем CharacterController перед телепортацией
-        CharacterController cc = player.GetComponent<CharacterController>();
-        if (cc != null)
+        private void UpdateTimerUI()
         {
-            cc.enabled = false;
-            player.transform.position = position;
-            player.transform.rotation = rotation;
-            cc.enabled = true;
-        }
-        else
-        {
-            player.transform.position = position;
-            player.transform.rotation = rotation;
+            if (timerText != null)
+            {
+                timerText.text = FormatTime(currentTime);
+            }
         }
         
-        // Сбрасываем скорость если есть Rigidbody
-        Rigidbody rb = player.GetComponent<Rigidbody>();
-        if (rb != null)
+        private void UpdateScoreUI()
         {
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
+            if (globalScoreText != null)
+            {
+                globalScoreText.text = $"Score: {totalScore}";
+            }
         }
         
-        Debug.Log($"[GameManager] Teleported player {player.name} to {position}");
-    }
-    
-    public void QuitGame()
-    {
+        private void FindTotem()
+        {
+            var totemObject = FindFirstObjectByType<TotemController>();
+            if (totemObject != null)
+            {
+                totem = totemObject;
+            }
+        }
+        
+        public void QuitGame()
+        {
 #if UNITY_EDITOR
-        UnityEditor.EditorApplication.isPlaying = false;
+            UnityEditor.EditorApplication.isPlaying = false;
 #else
-        Application.Quit();
+            Application.Quit();
 #endif
-    }
-    
-    public bool IsGameActive()
-    {
-        return isGameActive && !gameEnded;
-    }
-    
-    public float GetCurrentTime()
-    {
-        return currentTime;
+        }
     }
 }

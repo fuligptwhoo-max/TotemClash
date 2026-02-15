@@ -1,102 +1,121 @@
 using UnityEngine;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
+using TotemClash.Combat;
 
-public class IceSpikeProjectile : NetworkBehaviour
+namespace TotemClash.Combat.Projectiles
 {
-    [Header("Settings")]
-    public float damage = 25f;
-    public float slowAmount = 0.5f;
-    public float slowDuration = 3f;
-    
-    // FishNet 4.x SyncVar
-    public readonly SyncVar<GameObject> owner = new SyncVar<GameObject>();
-    
-    public float ignoreCollisionTime = 0.2f;
-    
-    private float spawnTime;
-    private bool collisionsIgnored = false;
-    
-    public override void OnStartNetwork()
+    public class IceSpikeProjectile : MonoBehaviour
     {
-        base.OnStartNetwork();
-        spawnTime = Time.time;
+        [Header("Settings")]
+        public float damage = 25f;
+        public float slowAmount = 0.5f;
+        public float slowDuration = 3f;
+        public float lifeTime = 3f;
         
-        // Игнорируем столкновения с владельцем
-        if (owner.Value != null)
+        [Header("Ignore Owner")]
+        public float ignoreCollisionTime = 0.2f;
+        
+        // Local references
+        private GameObject owner;
+        private float spawnTime;
+        private bool collisionsIgnored = false;
+        
+        private void Awake()
         {
-            IgnoreCollisionWithOwner();
+            spawnTime = Time.time;
         }
-    }
-    
-    private void Update()
-    {
-        if (collisionsIgnored && Time.time - spawnTime > ignoreCollisionTime)
+        
+        private void Start()
         {
-            EnableCollisions();
-        }
-    }
-    
-    public void IgnoreCollisionWithOwner()
-    {
-        if (owner.Value != null)
-        {
-            Collider[] ownerColliders = owner.Value.GetComponentsInChildren<Collider>();
-            Collider[] projectileColliders = GetComponentsInChildren<Collider>();
-            
-            foreach (var projCollider in projectileColliders)
+            // Ignore collisions with owner
+            if (owner != null)
             {
-                foreach (var ownerCollider in ownerColliders)
+                IgnoreCollisionWithOwner();
+            }
+            
+            // Auto-destroy after lifetime
+            Invoke(nameof(DestroyProjectile), lifeTime);
+        }
+        
+        /// <summary>
+        /// Initialize the projectile with owner
+        /// </summary>
+        public void Initialize(GameObject owner)
+        {
+            this.owner = owner;
+        }
+        
+        private void Update()
+        {
+            if (collisionsIgnored && Time.time - spawnTime > ignoreCollisionTime)
+            {
+                EnableCollisions();
+            }
+        }
+        
+        private void IgnoreCollisionWithOwner()
+        {
+            if (owner != null)
+            {
+                Collider[] ownerColliders = owner.GetComponentsInChildren<Collider>();
+                Collider[] projectileColliders = GetComponentsInChildren<Collider>();
+                
+                foreach (var projCollider in projectileColliders)
                 {
-                    if (ownerCollider != null && projCollider != null)
+                    foreach (var ownerCollider in ownerColliders)
                     {
-                        Physics.IgnoreCollision(projCollider, ownerCollider, true);
+                        if (ownerCollider != null && projCollider != null)
+                        {
+                            Physics.IgnoreCollision(projCollider, ownerCollider, true);
+                        }
                     }
+                }
+                
+                collisionsIgnored = true;
+            }
+        }
+        
+        private void EnableCollisions()
+        {
+            if (owner != null && collisionsIgnored)
+            {
+                Collider[] ownerColliders = owner.GetComponentsInChildren<Collider>();
+                Collider[] projectileColliders = GetComponentsInChildren<Collider>();
+                
+                foreach (var projCollider in projectileColliders)
+                {
+                    foreach (var ownerCollider in ownerColliders)
+                    {
+                        if (ownerCollider != null && projCollider != null)
+                        {
+                            Physics.IgnoreCollision(projCollider, ownerCollider, false);
+                        }
+                    }
+                }
+                
+                collisionsIgnored = false;
+            }
+        }
+        
+        private void OnCollisionEnter(Collision collision)
+        {
+            if (collision.gameObject != owner && collision.gameObject.CompareTag("Player"))
+            {
+                Debug.Log($"{owner?.name} dealt {damage} ice damage to {collision.gameObject.name}");
+                
+                HealthSystem health = collision.gameObject.GetComponent<HealthSystem>();
+                if (health != null)
+                {
+                    health.TakeDamage(damage, owner);
                 }
             }
             
-            collisionsIgnored = true;
-        }
-    }
-    
-    private void EnableCollisions()
-    {
-        if (owner.Value != null && collisionsIgnored)
-        {
-            Collider[] ownerColliders = owner.Value.GetComponentsInChildren<Collider>();
-            Collider[] projectileColliders = GetComponentsInChildren<Collider>();
-            
-            foreach (var projCollider in projectileColliders)
-            {
-                foreach (var ownerCollider in ownerColliders)
-                {
-                    if (ownerCollider != null && projCollider != null)
-                    {
-                        Physics.IgnoreCollision(projCollider, ownerCollider, false);
-                    }
-                }
-            }
-            
-            collisionsIgnored = false;
-        }
-    }
-    
-    private void OnCollisionEnter(Collision collision)
-    {
-        if (!base.IsServerInitialized) return;
-        
-        if (collision.gameObject != owner.Value && collision.gameObject.CompareTag("Player"))
-        {
-            Debug.Log($"{owner.Value?.name} dealt {damage} ice damage to {collision.gameObject.name}");
-            
-            HealthSystem health = collision.gameObject.GetComponent<HealthSystem>();
-            if (health != null)
-            {
-                health.TakeDamage(damage, owner.Value);
-            }
+            // Destroy projectile
+            DestroyProjectile();
         }
         
-        // Уничтожаем на сервере
-        base.ServerManager.Despawn(gameObject);
+        private void DestroyProjectile()
+        {
+            Destroy(gameObject);
+        }
     }
 }

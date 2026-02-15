@@ -1,24 +1,27 @@
 using UnityEngine;
 
-public class AttackRangeDetector : MonoBehaviour
+namespace TotemClash.Combat
 {
-    public NetworkPlayerController playerController;
-    
-    private void OnTriggerEnter(Collider other)
+    public class AttackRangeDetector : MonoBehaviour
     {
-        if (playerController != null && other.CompareTag("Player"))
+        public PlayerController playerController;
+        
+        private void OnTriggerEnter(Collider other)
         {
-            // Игрок вошел в зону атаки
-            Debug.Log($"Player {other.name} entered attack range");
+            if (playerController != null && other.CompareTag("Player"))
+            {
+                // Игрок вошел в зону атаки
+                Debug.Log($"Player {other.name} entered attack range");
+            }
         }
-    }
-    
-    private void OnTriggerExit(Collider other)
-    {
-        if (playerController != null && other.CompareTag("Player"))
+        
+        private void OnTriggerExit(Collider other)
         {
-            // Игрок вышел из зоны атаки
-            Debug.Log($"Player {other.name} left attack range");
+            if (playerController != null && other.CompareTag("Player"))
+            {
+                // Игрок вышел из зоны атаки
+                Debug.Log($"Player {other.name} left attack range");
+            }
         }
     }
 }

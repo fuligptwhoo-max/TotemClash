@@ -1,9 +1,13 @@
 using UnityEngine;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
-using FishNet.Connection;
+using UnityEngine.Events;
 
-public class PlayerTotemInteraction : NetworkBehaviour
+namespace TotemClash.Combat
+{
+    /// <summary>
+    /// Локальная версия взаимодействия с тотемом для одиночной игры
+    /// Не использует сетевую синхронизацию - вся логика выполняется локально
+    /// </summary>
+    public class PlayerTotemInteraction : MonoBehaviour
 {
     [Header("Totem Interaction")]
     public float interactionRange = 2f;
@@ -11,199 +15,163 @@ public class PlayerTotemInteraction : NetworkBehaviour
     [Header("Carry Settings")]
     public Transform carryBone;
     
-    // Ссылки
-    private NetworkPlayerController playerController;
+    [Header("Events")]
+    public UnityEvent<bool> OnCarryingStateChanged = new UnityEvent<bool>();
+    public UnityEvent OnPickedUp = new UnityEvent();
+    public UnityEvent OnDropped = new UnityEvent();
     
-    // FishNet 4.x SyncVar - свойство
-    public readonly SyncVar<bool> IsCarrying = new SyncVar<bool>(false);
-    
-    // Кэш тотема который несём
+    // Состояние
+    private bool isCarrying = false;
     private TotemController carriedTotem = null;
-
-    public override void OnStartClient()
+    
+    // Ссылки
+    private PlayerController playerController;
+    
+    // Публичное свойство для чтения состояния
+    public bool IsCarrying => isCarrying;
+    
+    private void Awake()
     {
-        base.OnStartClient();
-        playerController = GetComponent<NetworkPlayerController>();
-        
-        // Подписываемся на изменения
-        IsCarrying.OnChange += OnCarryingStateChanged;
+        playerController = GetComponent<PlayerController>();
     }
     
-    public override void OnStopClient()
+    private void OnEnable()
     {
-        base.OnStopClient();
-        IsCarrying.OnChange -= OnCarryingStateChanged;
+        // Подписываемся на события если нужно
     }
     
-    private void Update()
+    private void OnDisable()
     {
-        // Только для локального игрока
-        if (!base.IsOwner) return;
-        
-        if (Input.GetKeyDown(KeyCode.E))
+        // Отписываемся от событий
+        OnCarryingStateChanged.RemoveAllListeners();
+        OnPickedUp.RemoveAllListeners();
+        OnDropped.RemoveAllListeners();
+    }
+    
+    /// <summary>
+    /// Пытается поднять тотем в радиусе действия
+    /// Вызывается из PlayerController при нажатии клавиши E
+    /// </summary>
+    public void TryPickUp()
+    {
+        if (isCarrying) 
         {
-            if (IsCarrying.Value)
+            Debug.Log("[PlayerTotemInteraction] Already carrying totem");
+            return;
+        }
+        
+        // Ищем ближайший тотем
+        TotemController closestTotem = TotemController.FindClosestInRange(transform.position);
+        
+        if (closestTotem != null && !closestTotem.IsBeingCarried())
+        {
+            // Поднимаем тотем
+            bool pickedUp = closestTotem.PickUp(gameObject);
+            
+            if (pickedUp)
             {
-                CmdDropTotem();
+                isCarrying = true;
+                carriedTotem = closestTotem;
+                
+                // Обновляем анимацию
+                if (playerController != null)
+                {
+                    playerController.UpdateCarryingAnimation(true);
+                }
+                
+                // Вызываем события
+                OnCarryingStateChanged?.Invoke(true);
+                OnPickedUp?.Invoke();
+                
+                Debug.Log("[PlayerTotemInteraction] Picked up totem");
             }
-            else
-            {
-                CmdTryPickUp();
-            }
+        }
+        else
+        {
+            Debug.Log("[PlayerTotemInteraction] No available totems in range");
         }
     }
     
     /// <summary>
-    /// Обработчик изменения SyncVar
+    /// Бросает тотем
+    /// Вызывается из PlayerController при нажатии клавиши E (если несем) или G
     /// </summary>
-    private void OnCarryingStateChanged(bool prev, bool next, bool asServer)
+    public void DropTotem()
     {
-        // Обновляем анимацию
-        if (playerController != null)
+        if (!isCarrying) 
         {
-            playerController.UpdateCarryingAnimation(next);
-        }
-        
-        if (base.IsOwner)
-        {
-            Debug.Log($"[CLIENT] Carrying state changed: {prev} -> {next}");
-        }
-    }
-
-    [ServerRpc]
-    public void CmdTryPickUp()
-    {
-        if (IsCarrying.Value) 
-        {
-            Debug.Log($"[SERVER] Player {base.ObjectId} already carrying totem");
+            Debug.Log("[PlayerTotemInteraction] Not carrying totem");
             return;
         }
         
-        TotemController closestTotem = TotemController.GetClosestTotem(transform.position, interactionRange);
-        if (closestTotem != null && !closestTotem.IsBeingCarried())
-        {
-            // Поднимаем тотем на сервере
-            closestTotem.ServerPickUp(base.ObjectId);
-            
-            // Устанавливаем состояние у игрока
-            IsCarrying.Value = true;
-            carriedTotem = closestTotem;
-            
-            // Уведомляем клиента
-            TargetOnPickedUp(base.Owner);
-            
-            // Обновляем состояние в контроллере
-            if (playerController != null)
-            {
-                playerController.SetCarryingState(true);
-            }
-            
-            Debug.Log($"[SERVER] Player {base.ObjectId} picked up totem");
-        }
-        else
-        {
-            Debug.Log($"[SERVER] No available totems in range");
-        }
-    }
-
-    [TargetRpc]
-    private void TargetOnPickedUp(NetworkConnection target)
-    {
-        Debug.Log("[CLIENT] You picked up the totem!");
-    }
-
-    [ServerRpc]
-    public void CmdDropTotem()
-    {
-        if (!IsCarrying.Value) 
-        {
-            Debug.Log($"[SERVER] Player {base.ObjectId} is not carrying totem");
-            return;
-        }
-        
-        // Ищем тотем, который несем
+        // Бросаем тотем
         if (carriedTotem != null)
         {
-            carriedTotem.ServerDrop(base.ObjectId, false);
-        }
-        else
-        {
-            // Fallback - ищем по ObjectId
-            TotemController[] allTotems = FindObjectsByType<TotemController>(FindObjectsSortMode.None);
-            foreach (var totem in allTotems)
-            {
-                if (totem.GetCarrierId() == base.ObjectId)
-                {
-                    totem.ServerDrop(base.ObjectId, false);
-                    break;
-                }
-            }
+            carriedTotem.Drop(false);
         }
         
         // Сбрасываем состояние
-        IsCarrying.Value = false;
+        isCarrying = false;
         carriedTotem = null;
         
-        // Обновляем состояние в контроллере
+        // Обновляем анимацию
         if (playerController != null)
         {
-            playerController.SetCarryingState(false);
+            playerController.UpdateCarryingAnimation(false);
         }
         
-        // Уведомляем клиента
-        TargetOnDropped(base.Owner);
+        // Вызываем события
+        OnCarryingStateChanged?.Invoke(false);
+        OnDropped?.Invoke();
         
-        Debug.Log($"[SERVER] Player {base.ObjectId} dropped totem");
+        Debug.Log("[PlayerTotemInteraction] Dropped totem");
     }
-
-    [TargetRpc]
-    private void TargetOnDropped(NetworkConnection target)
-    {
-        Debug.Log("[CLIENT] You dropped the totem!");
-    }
-
-    // Вызывается при смерти игрока
-    [Server]
+    
+    /// <summary>
+    /// Вызывается при смерти игрока - сбрасывает тотем с силой
+    /// </summary>
     public void OnPlayerDeath()
     {
-        if (IsCarrying.Value)
+        if (isCarrying)
         {
-            // Сбрасываем тотем
+            // Бросаем тотем с силой (эффект "выпадения" при смерти)
             if (carriedTotem != null)
             {
-                carriedTotem.ServerDrop(base.ObjectId, true);
-            }
-            else
-            {
-                TotemController[] allTotems = FindObjectsByType<TotemController>(FindObjectsSortMode.None);
-                foreach (var totem in allTotems)
-                {
-                    if (totem.GetCarrierId() == base.ObjectId)
-                    {
-                        totem.ServerDrop(base.ObjectId, true);
-                        break;
-                    }
-                }
+                carriedTotem.Drop(true);
             }
             
-            IsCarrying.Value = false;
+            // Сбрасываем состояние
+            isCarrying = false;
             carriedTotem = null;
             
+            // Обновляем анимацию
             if (playerController != null)
             {
-                playerController.SetCarryingState(false);
+                playerController.UpdateCarryingAnimation(false);
             }
+            
+            // Вызываем события
+            OnCarryingStateChanged?.Invoke(false);
+            OnDropped?.Invoke();
+            
+            Debug.Log("[PlayerTotemInteraction] Dropped totem on death");
         }
     }
     
-    public override void OnStopServer()
+    /// <summary>
+    /// Возвращает текущий тотем который несет игрок
+    /// </summary>
+    public TotemController GetCarriedTotem()
     {
-        base.OnStopServer();
-        
-        // Сбрасываем тотем при отключении
-        if (IsCarrying.Value)
-        {
-            OnPlayerDeath();
-        }
+        return carriedTotem;
     }
+    
+    /// <summary>
+    /// Получает точку крепления для тотема
+    /// </summary>
+    public Transform GetCarryBone()
+    {
+        return carryBone;
+    }
+}
 }

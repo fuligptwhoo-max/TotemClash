@@ -1,288 +1,224 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
-using FishNet.Managing;
 using System.Collections.Generic;
 using System.Linq;
+using TotemClash.Combat;
 
-/// <summary>
-/// Меню окончания игры (появляется когда время вышло)
-/// Работает как Leaderboard - показывает список игроков с очками
-/// </summary>
-public class GameOverMenu : MonoBehaviour
+namespace TotemClash.UI
 {
-    public static GameOverMenu Instance { get; private set; }
-    
-    [Header("Panels")]
-    public GameObject gameOverPanel;
-    
-    [Header("UI - как Leaderboard")]
-    public TMP_Text winnerText;              // Текст победителя сверху
-    public Transform scoresContainer;        // Контейнер для записей (как entriesContainer)
-    public GameObject scoreEntryPrefab;      // Префаб записи (как entryPrefab)
-    public TMP_Text localScoreText;          // Очки локального игрока отдельно
-    
-    [Header("Buttons")]
-    public Button playAgainButton;
-    public Button changeCharacterButton;
-    public Button quitToMenuButton;
-    
-    [Header("Network")]
-    public NetworkManager networkManager;
-    
-    // Список созданных записей
-    private List<GameObject> createdEntries = new List<GameObject>();
-    
-    private void Awake()
+    public class GameOverMenu : MonoBehaviour
     {
-        if (Instance == null)
+        public static GameOverMenu Instance { get; private set; }
+        
+        [Header("Panels")]
+        public GameObject gameOverPanel;
+        
+        [Header("UI")]
+        public TMP_Text winnerText;
+        public Transform scoresContainer;
+        public GameObject scoreEntryPrefab;
+        public TMP_Text localScoreText;
+        
+        [Header("Buttons")]
+        public Button playAgainButton;
+        public Button quitToMenuButton;
+        
+        private List<GameObject> createdEntries = new List<GameObject>();
+        
+        private void Awake()
         {
-            Instance = this;
-        }
-        else
-        {
-            Destroy(gameObject);
-        }
-    }
-    
-    private void Start()
-    {
-        if (networkManager == null)
-            networkManager = FindFirstObjectByType<NetworkManager>();
-        
-        // Настраиваем Canvas для кликабельности
-        SetupCanvas();
-        
-        if (playAgainButton != null)
-            playAgainButton.onClick.AddListener(OnPlayAgain);
-        
-        if (changeCharacterButton != null)
-            changeCharacterButton.onClick.AddListener(OnChangeCharacter);
-        
-        if (quitToMenuButton != null)
-            quitToMenuButton.onClick.AddListener(OnQuitToMenu);
-        
-        if (gameOverPanel != null)
-            gameOverPanel.SetActive(false);
-            
-        Debug.Log("[GameOverMenu] Initialized");
-    }
-    
-    private void OnDestroy()
-    {
-        if (playAgainButton != null) playAgainButton.onClick.RemoveListener(OnPlayAgain);
-        if (changeCharacterButton != null) changeCharacterButton.onClick.RemoveListener(OnChangeCharacter);
-        if (quitToMenuButton != null) quitToMenuButton.onClick.RemoveListener(OnQuitToMenu);
-    }
-    
-    /// <summary>
-    /// Настраивает Canvas для работы UI
-    /// </summary>
-    private void SetupCanvas()
-    {
-        // Находим Canvas в иерархии
-        Canvas canvas = GetComponentInParent<Canvas>();
-        if (canvas == null)
-        {
-            canvas = FindFirstObjectByType<Canvas>();
-        }
-        
-        if (canvas != null)
-        {
-            // Добавляем GraphicRaycaster если нет
-            GraphicRaycaster raycaster = canvas.GetComponent<GraphicRaycaster>();
-            if (raycaster == null)
+            if (Instance == null)
             {
-                raycaster = canvas.gameObject.AddComponent<GraphicRaycaster>();
-                Debug.Log("[GameOverMenu] Added GraphicRaycaster to Canvas");
+                Instance = this;
             }
-            
-            // Устанавливаем высокий sort order чтобы быть поверх всего
-            canvas.sortingOrder = 200;
-            
-            // Убедимся что Canvas включен
-            canvas.enabled = true;
-            
-            Debug.Log($"[GameOverMenu] Canvas setup complete: SortOrder={canvas.sortingOrder}");
-        }
-        else
-        {
-            Debug.LogWarning("[GameOverMenu] Canvas not found in parent, but UI might still work if assigned in inspector.");
-        }
-        
-        // Проверяем наличие EventSystem
-        var eventSystem = FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>();
-        if (eventSystem == null)
-        {
-            Debug.LogWarning("[GameOverMenu] EventSystem not found in scene! If buttons don't work, add EventSystem via GameObject -> UI -> EventSystem");
-        }
-    }
-    
-    /// <summary>
-    /// Показывает меню окончания игры с результатами
-    /// </summary>
-    public void ShowGameOver()
-    {
-        if (gameOverPanel != null)
-        {
-            gameOverPanel.SetActive(true);
-            // Ставим на передний план
-            gameOverPanel.transform.SetAsLastSibling();
-        }
-        
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
-        
-        PopulateResults();
-        
-        Debug.Log("[GameOverMenu] Game Over shown");
-    }
-    
-    /// <summary>
-    /// Заполняет результаты - как в Leaderboard
-    /// </summary>
-    private void PopulateResults()
-    {
-        // Очищаем старые записи
-        foreach (var entry in createdEntries)
-        {
-            if (entry != null) Destroy(entry);
-        }
-        createdEntries.Clear();
-        
-        // Находим всех игроков и сортируем по очкам
-        var players = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
-        var sortedPlayers = players.OrderByDescending(p => p.GetScore()).ToList();
-        
-        Debug.Log($"[GameOverMenu] Found {sortedPlayers.Count} players");
-        
-        // Показываем победителя
-        if (sortedPlayers.Count > 0 && winnerText != null)
-        {
-            var winner = sortedPlayers[0];
-            winnerText.text = $"Победитель: {winner.GetPlayerName()} - {winner.GetScore()} очков";
-        }
-        else
-        {
-            if (winnerText != null)
-                winnerText.text = "Нет победителя";
-        }
-        
-        // Заполняем таблицу результатов - как в Leaderboard
-        if (scoreEntryPrefab != null && scoresContainer != null)
-        {
-            int place = 1;
-            foreach (var player in sortedPlayers)
+            else
             {
-                CreateScoreEntry(place, player);
-                place++;
+                Destroy(gameObject);
             }
         }
         
-        // Показываем очки локального игрока отдельно
-        if (localScoreText != null)
+        private void Start()
         {
-            foreach (var player in sortedPlayers)
+            SetupCanvas();
+            
+            if (playAgainButton != null)
+                playAgainButton.onClick.AddListener(OnPlayAgain);
+            
+            if (quitToMenuButton != null)
+                quitToMenuButton.onClick.AddListener(OnQuitToMenu);
+            
+            if (gameOverPanel != null)
+                gameOverPanel.SetActive(false);
+                
+            Debug.Log("[GameOverMenu] Initialized (Single Player)");
+        }
+        
+        private void OnDestroy()
+        {
+            if (playAgainButton != null) playAgainButton.onClick.RemoveListener(OnPlayAgain);
+            if (quitToMenuButton != null) quitToMenuButton.onClick.RemoveListener(OnQuitToMenu);
+        }
+        
+        private void SetupCanvas()
+        {
+            Canvas canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
             {
-                var netObj = player.GetComponent<FishNet.Object.NetworkObject>();
-                if (netObj != null && netObj.IsOwner)
+                canvas = FindFirstObjectByType<Canvas>();
+            }
+            
+            if (canvas != null)
+            {
+                GraphicRaycaster raycaster = canvas.GetComponent<GraphicRaycaster>();
+                if (raycaster == null)
                 {
-                    localScoreText.text = $"Ваш счет: {player.GetScore()} (место #{sortedPlayers.IndexOf(player) + 1})";
+                    raycaster = canvas.gameObject.AddComponent<GraphicRaycaster>();
+                    Debug.Log("[GameOverMenu] Added GraphicRaycaster to Canvas");
+                }
+                
+                canvas.sortingOrder = 200;
+                canvas.enabled = true;
+            }
+        }
+        
+        public void ShowGameOver()
+        {
+            if (gameOverPanel != null)
+            {
+                gameOverPanel.SetActive(true);
+                gameOverPanel.transform.SetAsLastSibling();
+            }
+            
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+            
+            PopulateResults();
+            
+            Debug.Log("[GameOverMenu] Game Over shown");
+        }
+        
+        private void PopulateResults()
+        {
+            // Очищаем старые записи
+            foreach (var entry in createdEntries)
+            {
+                if (entry != null) Destroy(entry);
+            }
+            createdEntries.Clear();
+            
+            var players = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
+            var sortedPlayers = players.OrderByDescending(p => p.GetScore()).ToList();
+            
+            Debug.Log($"[GameOverMenu] Found {sortedPlayers.Count} players");
+            
+            PlayerScore localPlayer = null;
+            foreach (var player in sortedPlayers)
+            {
+                if (!player.IsBot())
+                {
+                    localPlayer = player;
                     break;
                 }
             }
-        }
-    }
-    
-    /// <summary>
-    /// Создаёт запись результата - как CreateEntry в Leaderboard
-    /// </summary>
-    private void CreateScoreEntry(int place, PlayerScore player)
-    {
-        if (scoreEntryPrefab == null || scoresContainer == null) return;
-        
-        GameObject entry = Instantiate(scoreEntryPrefab, scoresContainer);
-        entry.name = $"Entry_{place}_{player.GetPlayerName()}";
-        
-        // Получаем TMP_Text из префаба
-        TMP_Text text = entry.GetComponent<TMP_Text>();
-        if (text == null)
-            text = entry.GetComponentInChildren<TMP_Text>();
-        
-        if (text != null)
-        {
-            text.text = $"#{place} {player.GetPlayerName()}: {player.GetScore()}";
             
-            // Цвета для призовых мест
-            if (place == 1)
-                text.color = Color.yellow;      // Золото
-            else if (place == 2)
-                text.color = new Color(0.7f, 0.7f, 0.7f); // Серебро
-            else if (place == 3)
-                text.color = new Color(0.8f, 0.5f, 0.2f); // Бронза
+            if (sortedPlayers.Count > 0 && winnerText != null)
+            {
+                var winner = sortedPlayers[0];
+                string winnerType = winner.IsBot() ? "[БОТ] " : "";
+                winnerText.text = $"Победитель: {winnerType}{winner.GetPlayerName()} - {winner.GetScore()} очков";
+                
+                if (winner == localPlayer)
+                {
+                    winnerText.color = Color.yellow;
+                }
+                else
+                {
+                    winnerText.color = Color.red;
+                }
+            }
             else
-                text.color = Color.white;
+            {
+                if (winnerText != null)
+                    winnerText.text = "Нет победителя";
+            }
+            
+            if (scoreEntryPrefab != null && scoresContainer != null)
+            {
+                int place = 1;
+                foreach (var player in sortedPlayers)
+                {
+                    CreateScoreEntry(place, player, player == localPlayer);
+                    place++;
+                }
+            }
+            
+            if (localScoreText != null && localPlayer != null)
+            {
+                int playerPlace = sortedPlayers.IndexOf(localPlayer) + 1;
+                localScoreText.text = $"Ваш счет: {localPlayer.GetScore()} (место #{playerPlace})";
+            }
         }
         
-        createdEntries.Add(entry);
-    }
-    
-    private void OnPlayAgain()
-    {
-        Debug.Log("[GameOverMenu] Play Again clicked");
-        
-        if (gameOverPanel != null)
-            gameOverPanel.SetActive(false);
-        
-        // Вызываем рестарт через GameManager
-        if (GameManager.Instance != null)
+        private void CreateScoreEntry(int place, PlayerScore player, bool isLocalPlayer)
         {
-            GameManager.Instance.RestartGame();
+            if (scoreEntryPrefab == null || scoresContainer == null) return;
+            
+            GameObject entry = Instantiate(scoreEntryPrefab, scoresContainer);
+            entry.name = $"Entry_{place}_{player.GetPlayerName()}";
+            
+            TMP_Text text = entry.GetComponent<TMP_Text>();
+            if (text == null)
+                text = entry.GetComponentInChildren<TMP_Text>();
+            
+            if (text != null)
+            {
+                string botPrefix = player.IsBot() ? "[БОТ] " : "";
+                string playerPrefix = isLocalPlayer ? "(Вы) " : "";
+                text.text = $"#{place} {playerPrefix}{botPrefix}{player.GetPlayerName()}: {player.GetScore()}";
+                
+                if (place == 1)
+                    text.color = Color.yellow;
+                else if (place == 2)
+                    text.color = new Color(0.7f, 0.7f, 0.7f);
+                else if (place == 3)
+                    text.color = new Color(0.8f, 0.5f, 0.2f);
+                else
+                    text.color = Color.white;
+                
+                if (isLocalPlayer)
+                {
+                    text.fontStyle = FontStyles.Bold;
+                }
+            }
+            
+            createdEntries.Add(entry);
         }
-        else
+        
+        // ИСПРАВЛЕНО: Полная перезагрузка сцены для корректного рестарта
+        private void OnPlayAgain()
         {
-            Debug.LogError("[GameOverMenu] GameManager.Instance is null!");
-            // Fallback: перезагружаем текущую сцену
-            UnityEngine.SceneManagement.SceneManager.LoadScene(
-                UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+            Debug.Log("[GameOverMenu] Play Again clicked - reloading scene");
+            
+            if (gameOverPanel != null)
+                gameOverPanel.SetActive(false);
+            
+            Time.timeScale = 1f;
+            
+            // Полная перезагрузка сцены вместо попытки рестарта внутри игры
+            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            UnityEngine.SceneManagement.SceneManager.LoadScene(currentScene);
         }
-    }
-    
-    private void OnChangeCharacter()
-    {
-        Debug.Log("[GameOverMenu] Change Character clicked - заглушка");
         
-        if (winnerText != null)
+        private void OnQuitToMenu()
         {
-            winnerText.text = "Смена персонажа\n(В разработке)";
+            Debug.Log("[GameOverMenu] Quit to Menu clicked");
+            
+            if (gameOverPanel != null)
+                gameOverPanel.SetActive(false);
+            
+            Time.timeScale = 1f;
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
         }
-    }
-    
-    private void OnQuitToMenu()
-    {
-        Debug.Log("[GameOverMenu] Quit to Menu clicked");
-        
-        // Скрываем панель
-        if (gameOverPanel != null)
-            gameOverPanel.SetActive(false);
-        
-        // Очищаем списки игроков в MyNetworkManager
-        if (MyNetworkManager.Instance != null)
-        {
-            MyNetworkManager.Instance.ClearSpawnedPlayers();
-        }
-        
-        // Отключаем сеть и загружаем меню
-        if (networkManager != null)
-        {
-            // Останавливаем клиента и сервер
-            if (networkManager.ClientManager.Started)
-                networkManager.ClientManager.StopConnection();
-            if (networkManager.ServerManager.Started)
-                networkManager.ServerManager.StopConnection(true);
-        }
-        
-        // Загружаем сцену меню
-        UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
     }
 }

@@ -1,95 +1,111 @@
 using UnityEngine;
-using FishNet.Object;
-using FishNet.Object.Synchronizing;
+using UnityEngine.Events;
+using TotemClash.UI;
 
-/// <summary>
-/// Хранит и синхронизирует очки игрока
-/// </summary>
-public class PlayerScore : NetworkBehaviour
+namespace TotemClash.Combat
 {
-    // Синхронизируемое значение очков
-    public readonly SyncVar<int> score = new SyncVar<int>(0);
-    
-    private string playerName;
-    
-    public override void OnStartNetwork()
+    public class PlayerScore : MonoBehaviour
     {
-        base.OnStartNetwork();
+        [System.Serializable]
+        public class ScoreChangedEvent : UnityEvent<int> { }
         
-        score.OnChange += OnScoreChanged;
+        private int score = 0;
+        private string playerName;
+        private bool isBot = false;
         
-        // Устанавливаем имя игрока
-        playerName = $"Player {OwnerId}";
+        public ScoreChangedEvent onScoreChanged = new ScoreChangedEvent();
         
-        // Регистрируем в таблице лидеров
-        if (LeaderboardManager.Instance != null)
-        {
-            LeaderboardManager.Instance.RegisterPlayer(this);
-            Debug.Log($"[PlayerScore] Registered in leaderboard: {playerName}");
-        }
-        else
-        {
-            Debug.LogWarning("[PlayerScore] LeaderboardManager not found!");
-        }
-    }
-    
-    public override void OnStopNetwork()
-    {
-        base.OnStopNetwork();
-        score.OnChange -= OnScoreChanged;
+        // ИСПРАВЛЕНО: Ссылка на тотем для начисления очков
+        private TotemController totem;
+        private float carryTimeAccumulator = 0f;
         
-        // Удаляем из таблицы лидеров
-        if (LeaderboardManager.Instance != null)
+        private void Start()
         {
-            LeaderboardManager.Instance.UnregisterPlayer(this);
-            Debug.Log($"[PlayerScore] Unregistered from leaderboard: {playerName}");
+            if (string.IsNullOrEmpty(playerName))
+            {
+                playerName = $"Player {gameObject.name}";
+            }
+            
+            // ИСПРАВЛЕНО: Находим тотем
+            totem = FindFirstObjectByType<TotemController>();
+            
+            if (LeaderboardManager.Instance != null)
+            {
+                LeaderboardManager.Instance.RegisterPlayer(this);
+            }
         }
-    }
-    
-    private void OnScoreChanged(int prev, int next, bool asServer)
-    {
-        // Уведомляем таблицу лидеров
-        if (LeaderboardManager.Instance != null)
+        
+        private void Update()
         {
-            LeaderboardManager.Instance.UpdatePlayerScore(this);
+            // ИСПРАВЛЕНО: Начисляем очки за ношение тотема
+            if (totem != null && totem.GetCarrier() == gameObject)
+            {
+                carryTimeAccumulator += Time.deltaTime;
+                
+                // Каждую секунду начисляем очки
+                if (carryTimeAccumulator >= 1f)
+                {
+                    int points = Mathf.FloorToInt(totem.GetCarryMultiplier());
+                    AddScore(points);
+                    carryTimeAccumulator -= 1f;
+                }
+            }
         }
-    }
-    
-    /// <summary>
-    /// Добавляет очки игроку (только сервер)
-    /// </summary>
-    [Server]
-    public void AddScore(int points)
-    {
-        if (points <= 0) return;
-        score.Value += points;
-    }
-    
-    /// <summary>
-    /// Сбрасывает очки (только сервер)
-    /// </summary>
-    [Server]
-    public void ResetScore()
-    {
-        score.Value = 0;
-    }
-    
-    /// <summary>
-    /// Устанавливает имя игрока
-    /// </summary>
-    [Server]
-    public void SetPlayerName(string name)
-    {
-        playerName = name;
-    }
-    
-    public string GetPlayerName()
-    {
-        return playerName;
-    }
-    
-    public int GetScore()
-    {
-        return score.Value;
+        
+        private void OnDestroy()
+        {
+            if (LeaderboardManager.Instance != null)
+            {
+                LeaderboardManager.Instance.UnregisterPlayer(this);
+            }
+        }
+        
+        public void AddScore(int points)
+        {
+            if (points <= 0) return;
+            
+            score += points;
+            onScoreChanged?.Invoke(score);
+            
+            if (LeaderboardManager.Instance != null)
+            {
+                LeaderboardManager.Instance.UpdatePlayerScore(this);
+            }
+            
+            Debug.Log($"[PlayerScore] {playerName} gained {points} points. Total: {score}");
+        }
+        
+        public void ResetScore()
+        {
+            score = 0;
+            carryTimeAccumulator = 0f;
+            onScoreChanged?.Invoke(score);
+            
+            if (LeaderboardManager.Instance != null)
+            {
+                LeaderboardManager.Instance.UpdatePlayerScore(this);
+            }
+        }
+        
+        public void SetPlayerName(string name)
+        {
+            playerName = name;
+            if (LeaderboardManager.Instance != null)
+            {
+                LeaderboardManager.Instance.UpdatePlayerScore(this);
+            }
+        }
+        
+        public string GetPlayerName() => playerName;
+        public int GetScore() => score;
+        public void SetIsBot(bool value) => isBot = value;
+        public bool IsBot() => isBot;
+        
+        // ИСПРАВЛЕНО: Публичный метод для начисления очков за убийство
+        public void OnKillEnemy(GameObject enemy)
+        {
+            AddScore(100); // 100 очков за убийство
+            Debug.Log($"[PlayerScore] {playerName} killed {enemy.name}, +100 points");
+        }
     }
 }

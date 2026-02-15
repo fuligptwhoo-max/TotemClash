@@ -8,6 +8,9 @@ TagManager:
   - Projectile
   - SpawnPoint
   - LocalScore
+  - Enemy
+  - Totem
+  - Wall
   layers:
   - Default
   - TransparentFX
@@ -19,7 +22,7 @@ TagManager:
   - Enemy
   - Projectile
   - LocalScore
-  - 
+  - Wall
   - 
   - 
   - 
