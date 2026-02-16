@@ -1,11 +1,11 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TotemClash.UI;
-using TotemClash.Network; // Для GameSettings
+using TotemClash.Network;
 
 namespace TotemClash.Combat
 {
-    [RequireComponent(typeof(PlayerCombat))]
+    [RequireComponent(typeof(CombatSystem))]
     [RequireComponent(typeof(PlayerTotemInteraction))]
     public class PlayerController : MonoBehaviour
     {
@@ -13,37 +13,25 @@ namespace TotemClash.Combat
         public float moveSpeed = 8f;
         public float rotationSpeed = 10f;
         
-        [Header("Combat Settings")]
-        public float attackCooldown = 0.5f;
-        
         [Header("Totem Pickup Settings")]
         public float totemPickupTime = 1.5f;
-        
-        [Header("Totem Pickup UI")]
         public GameObject totemPickupUIPrefab;
         
         [Header("References")]
         public Animator animator;
         public CharacterController characterController;
         public AimingSystem aimingSystem;
-        public PlayerCombat playerCombat;
         public HealthSystem healthSystem;
+        public CombatSystem combatSystem;
         
         [Header("Input Settings")]
-        public KeyCode attackKey = KeyCode.Mouse0;
-        public KeyCode ability1Key = KeyCode.Q;
-        public KeyCode ability2Key = KeyCode.R;
-        public KeyCode ultimateKey = KeyCode.F;
         public KeyCode pickupKey = KeyCode.E;
         public KeyCode dropKey = KeyCode.G;
         
         private PlayerTotemInteraction totemInteraction;
         private Vector2 inputVector = Vector2.zero;
         private Vector3 moveDirection = Vector3.zero;
-        private bool isMovementEnabled = true;
-        private bool isAttackEnabled = true;
         private bool controlsEnabled = true;
-        private float lastAttackTime = 0f;
         private float spawnTime = 0f;
         private TotemPickupUI totemPickupUI;
         private GameObject totemPickupUIInstance;
@@ -51,15 +39,13 @@ namespace TotemClash.Combat
         
         private void Awake()
         {
-            Debug.Log($"[PlayerController] Awake on {gameObject.name}");
-            
             totemInteraction = GetComponent<PlayerTotemInteraction>();
             
             if (characterController == null)
                 characterController = GetComponent<CharacterController>();
             
-            if (playerCombat == null)
-                playerCombat = GetComponent<PlayerCombat>();
+            if (combatSystem == null)
+                combatSystem = GetComponent<CombatSystem>();
             
             if (animator == null)
                 animator = GetComponentInChildren<Animator>();
@@ -69,15 +55,10 @@ namespace TotemClash.Combat
             
             if (aimingSystem == null)
                 aimingSystem = GetComponent<AimingSystem>();
-                
-            // ИСПРАВЛЕНО: Применяем настройки скорости из GameSettings
-            ApplySpeedSettings();
         }
         
         private void Start()
         {
-            Debug.Log($"[PlayerController] Start - {gameObject.name}");
-            
             spawnTime = Time.time;
             InitializeTotemPickupUI();
             
@@ -95,12 +76,6 @@ namespace TotemClash.Combat
                 healthSystem.OnDeath.AddListener(OnPlayerDeath);
                 healthSystem.OnRespawn.AddListener(OnPlayerRespawn);
             }
-            
-            // ИСПРАВЛЕНО: Подписываемся на изменение настроек скорости
-            if (GameSettings.Instance != null)
-            {
-                GameSettings.Instance.OnPlayerSpeedChanged.AddListener(OnSpeedSettingChanged);
-            }
         }
         
         private void OnDestroy()
@@ -111,66 +86,25 @@ namespace TotemClash.Combat
                 healthSystem.OnRespawn.RemoveListener(OnPlayerRespawn);
             }
             
-            // ИСПРАВЛЕНО: Отписываемся от событий
-            if (GameSettings.Instance != null)
-            {
-                GameSettings.Instance.OnPlayerSpeedChanged.RemoveListener(OnSpeedSettingChanged);
-            }
-            
             Cursor.visible = true;
             Cursor.lockState = CursorLockMode.None;
             
             if (totemPickupUIInstance != null)
-            {
                 Destroy(totemPickupUIInstance);
-            }
-        }
-        
-        // ИСПРАВЛЕНО: Применение начальных настроек
-        private void ApplySpeedSettings()
-        {
-            if (GameSettings.Instance != null)
-            {
-                moveSpeed = GameSettings.Instance.GetPlayerSpeed();
-                Debug.Log($"[PlayerController] Applied speed from settings: {moveSpeed}");
-            }
-        }
-        
-        // ИСПРАВЛЕНО: Обработчик изменения скорости
-        private void OnSpeedSettingChanged(float newSpeed)
-        {
-            moveSpeed = newSpeed;
-            Debug.Log($"[PlayerController] Speed updated to: {newSpeed}");
         }
         
         public void SetupCamera()
         {
-            Debug.Log("[PlayerController] SetupCamera called");
-            
             CameraController cameraController = FindFirstObjectByType<CameraController>();
             
             if (cameraController != null)
             {
                 cameraController.SetTarget(transform);
-                Debug.Log("[PlayerController] Camera set to follow player");
             }
             else
             {
-                Debug.LogWarning("[PlayerController] CameraController not found! Creating fallback...");
-                CreateFallbackCamera();
+                Debug.LogWarning("[PlayerController] CameraController not found!");
             }
-        }
-        
-        private void CreateFallbackCamera()
-        {
-            GameObject camObj = new GameObject("FallbackCamera");
-            Camera cam = camObj.AddComponent<Camera>();
-            cam.fieldOfView = 90f;
-            
-            CameraController cc = camObj.AddComponent<CameraController>();
-            cc.SetTarget(transform);
-            
-            Debug.Log("[PlayerController] Fallback camera created");
         }
         
         private void InitializeTotemPickupUI()
@@ -205,14 +139,13 @@ namespace TotemClash.Combat
         private void Update()
         {
             if (!controlsEnabled) return;
-            
             if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused()) return;
             
-            if (Time.time - spawnTime < 2f) return;
+            // УБРАНО: if (Time.time - spawnTime < 2f) return; - больше нет фриза при спавне
             
             GetInput();
             
-            if (isMovementEnabled)
+            if (controlsEnabled)
             {
                 MovePlayer();
             }
@@ -232,29 +165,6 @@ namespace TotemClash.Combat
         {
             if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused()) return;
             
-            if (Input.GetKeyDown(attackKey) && isAttackEnabled)
-            {
-                if (Time.time - lastAttackTime >= attackCooldown)
-                {
-                    PerformAttack();
-                }
-            }
-            
-            if (Input.GetKeyDown(ability1Key) && isAttackEnabled)
-            {
-                UseAbility(0);
-            }
-            
-            if (Input.GetKeyDown(ability2Key) && isAttackEnabled)
-            {
-                UseAbility(1);
-            }
-            
-            if (Input.GetKeyDown(ultimateKey) && isAttackEnabled)
-            {
-                UseUltimate();
-            }
-            
             if (Input.GetKeyDown(pickupKey))
             {
                 if (IsCarryingTotem())
@@ -270,38 +180,6 @@ namespace TotemClash.Combat
             if (Input.GetKeyDown(dropKey))
             {
                 DropTotem();
-            }
-        }
-        
-        private void PerformAttack()
-        {
-            if (playerCombat != null && aimingSystem != null)
-            {
-                Vector3 aimPosition = aimingSystem.GetAimPosition();
-                bool attackPerformed = playerCombat.PrimaryAttack(aimPosition);
-                
-                if (attackPerformed)
-                {
-                    lastAttackTime = Time.time;
-                }
-            }
-        }
-        
-        private void UseAbility(int abilityIndex)
-        {
-            if (playerCombat != null && aimingSystem != null)
-            {
-                Vector3 aimPosition = aimingSystem.GetAimPosition();
-                playerCombat.UseAbility(abilityIndex, aimPosition);
-            }
-        }
-        
-        private void UseUltimate()
-        {
-            if (playerCombat != null && aimingSystem != null)
-            {
-                Vector3 aimPosition = aimingSystem.GetAimPosition();
-                playerCombat.UseUltimate(aimPosition);
             }
         }
         
@@ -382,16 +260,14 @@ namespace TotemClash.Combat
                     totemPickupUI.Hide();
                 }
             }
-            
-            Debug.Log($"[PlayerController] Carrying state set to: {carrying}");
         }
         
         public void OnPlayerDeath()
         {
             EnableControls(false);
             
-            if (playerCombat != null)
-                playerCombat.enabled = false;
+            if (combatSystem != null)
+                combatSystem.enabled = false;
                 
             if (aimingSystem != null)
                 aimingSystem.enabled = false;
@@ -417,8 +293,8 @@ namespace TotemClash.Combat
         {
             EnableControls(true);
             
-            if (playerCombat != null)
-                playerCombat.enabled = true;
+            if (combatSystem != null)
+                combatSystem.enabled = true;
                 
             if (aimingSystem != null)
                 aimingSystem.enabled = true;
@@ -438,25 +314,20 @@ namespace TotemClash.Combat
             spawnTime = Time.time;
             
             SetupCamera();
-            
-            // ИСПРАВЛЕНО: Применяем настройки снова после респавна
-            ApplySpeedSettings();
         }
         
         public void EnableControls(bool enable)
         {
             controlsEnabled = enable;
-            isMovementEnabled = enable;
-            isAttackEnabled = enable;
             
             if (characterController != null)
             {
                 characterController.enabled = enable;
             }
             
-            if (playerCombat != null)
+            if (combatSystem != null)
             {
-                playerCombat.enabled = enable;
+                combatSystem.enabled = enable;
             }
         }
         
@@ -468,11 +339,6 @@ namespace TotemClash.Combat
         public PlayerTotemInteraction GetTotemInteraction()
         {
             return totemInteraction;
-        }
-        
-        public TotemPickupUI GetTotemPickupUI()
-        {
-            return totemPickupUI;
         }
     }
 }

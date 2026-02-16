@@ -104,8 +104,8 @@ namespace TotemClash.Combat
         // ИСПРАВЛЕНО: Публичный метод для начисления очков за убийство
         public void OnKillEnemy(GameObject enemy)
         {
-            AddScore(100); // 100 очков за убийство
-            Debug.Log($"[PlayerScore] {playerName} killed {enemy.name}, +100 points");
+            AddScore(5); // 5 очков за убийство
+            Debug.Log($"[PlayerScore] {playerName} killed {enemy.name}, +5 points");
         }
     }
 }

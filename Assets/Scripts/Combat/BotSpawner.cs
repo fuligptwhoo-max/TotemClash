@@ -3,8 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using TotemClash.Combat;
-using TotemClash.Classes; // Для MagicianClass
-using TotemClash.Network; // Для GameSettings
+using TotemClash.Network;
 
 namespace TotemClash.AI
 {
@@ -24,26 +23,14 @@ namespace TotemClash.AI
         }
 
         [Header("Bot Settings")]
-        [Tooltip("Префаб бота (без PlayerController)")]
         [SerializeField] public GameObject botPrefab;
-
-        [Tooltip("Количество ботов для спавна")]
         [SerializeField] public int botCount = 5;
-
-        [Tooltip("Задержка между спавнами (в секундах)")]
         [SerializeField] private float spawnDelay = 0.5f;
-
-        [Tooltip("Точки спавна ботов")]
         [SerializeField] private List<Transform> spawnPoints = new List<Transform>();
 
         [Header("Bot Configuration")]
-        [Tooltip("Слой для ботов")]
         [SerializeField] private int botLayer = 7;
-
-        [Tooltip("Тег для ботов")]
         [SerializeField] private string botTag = "Enemy";
-
-        [Tooltip("Случайные имена для ботов")]
         [SerializeField] private List<string> botNames = new List<string>()
         {
             "Shadow Walker", "Mystic Flame", "Dark Sorcerer", "Arcane Hunter", 
@@ -232,7 +219,6 @@ namespace TotemClash.AI
                 healthSystem = bot.AddComponent<HealthSystem>();
             }
             
-            // Боты респавнятся (если нужно чтобы уничтожались - поставьте false)
             healthSystem.autoRespawn = true;
             
             if (spawnPointIndex >= 0 && spawnPointIndex < spawnPoints.Count)
@@ -241,10 +227,10 @@ namespace TotemClash.AI
                 healthSystem.SetSpawnPosition(spawnPoint.position, spawnPoint.rotation);
             }
 
-            PlayerCombat playerCombat = bot.GetComponent<PlayerCombat>();
-            if (playerCombat == null)
+            CombatSystem combatSystem = bot.GetComponent<CombatSystem>();
+            if (combatSystem == null)
             {
-                playerCombat = bot.AddComponent<PlayerCombat>();
+                combatSystem = bot.AddComponent<CombatSystem>();
             }
 
             PlayerScore playerScore = bot.GetComponent<PlayerScore>();
@@ -255,22 +241,32 @@ namespace TotemClash.AI
             playerScore.SetIsBot(true);
             playerScore.SetPlayerName(GetRandomBotName());
 
-            // ИСПРАВЛЕНО: Применяем настройки из GameSettings
+            // НАСТРОЙКА AIMING SYSTEM ДЛЯ БОТОВ
+            AimingSystem aimingSystem = bot.GetComponent<AimingSystem>();
+            if (aimingSystem == null)
+            {
+                aimingSystem = bot.AddComponent<AimingSystem>();
+            }
+            
+            // КРИТИЧНО: Боты не управляются мышью!
+            aimingSystem.isPlayerControlled = false;
+            // Ботам не нужен префаб прицела (он создастся пустым)
+            aimingSystem.crosshairPrefab = null;
+
             if (GameSettings.Instance != null)
             {
                 aiController.moveSpeed = GameSettings.Instance.GetPlayerSpeed();
                 
-                MagicianClass magician = bot.GetComponent<MagicianClass>();
-                if (magician != null)
+                if (combatSystem.primaryAttack != null)
                 {
-                    magician.fireballSpeed = GameSettings.Instance.GetProjectileSpeed();
-                    magician.fireballDamage = GameSettings.Instance.GetDamagePerHit();
-                    Debug.Log($"[BotSpawner] Applied settings to bot: Speed={aiController.moveSpeed}, ProjectileSpeed={magician.fireballSpeed}, Damage={magician.fireballDamage}");
+                    combatSystem.primaryAttack.projectileSpeed = GameSettings.Instance.GetProjectileSpeed();
+                    combatSystem.primaryAttack.damage = GameSettings.Instance.GetDamagePerHit();
                 }
             }
 
             aiController.healthSystem = healthSystem;
-            aiController.playerCombat = playerCombat;
+            aiController.combatSystem = combatSystem;
+            aiController.aiming = aimingSystem; // <-- ЗДЕСЬ ИСПОЛЬЗУЕТСЯ ПОЛЕ aiming
 
             if (aiController.animator == null)
             {

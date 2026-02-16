@@ -1,7 +1,6 @@
 using UnityEngine;
 using System.Collections;
-using TotemClash.Combat;
-using TotemClash.Classes;
+using TotemClash.UI;
 
 namespace TotemClash.Combat
 {
@@ -12,17 +11,19 @@ namespace TotemClash.Combat
         public float rotationSpeed = 8f;
         public float attackRange = 20f;
         public float detectionRange = 25f;
-        public float totemPriorityRange = 30f;
+        public float totemPriorityRange = 50f;
         
         [Header("Combat")]
-        public float attackCooldown = 1.5f;
-        public float attackDelay = 0.3f;
+        public float attackCooldown = 1.2f;
+        public float minAttackDistance = 3f;
+        public float preferredAttackDistance = 12f;
         public float dodgeChance = 0.4f;
         public float dodgeCooldown = 2f;
+        [Range(0,1)] public float attackProbability = 0.6f;
         
         [Header("Totem Behavior")]
         public float totemPickupRange = 2.5f;
-        public float fleeDistance = 15f;
+        public float fleeDistance = 20f;
         public float minFleeDistance = 8f;
         public float aggressionRange = 10f;
         
@@ -37,26 +38,21 @@ namespace TotemClash.Combat
         public Animator animator;
         public CharacterController characterController;
         public HealthSystem healthSystem;
-        public PlayerCombat playerCombat;
+        public CombatSystem combatSystem;
         public PlayerTotemInteraction totemInteraction;
+        public AimingSystem aiming;
         
         private enum BotState
         {
-            Idle,
-            SeekingTotem,
-            FleeingWithTotem,
-            ChasingTotemCarrier,
-            AttackingEnemy,
-            Dodging,
-            Roaming,
-            AvoidingWall
+            Idle, SeekingTotem, FleeingWithTotem, ChasingTotemCarrier, 
+            AttackingEnemy, Dodging, Roaming, AvoidingWall, Retreating
         }
         
         private BotState currentState = BotState.Idle;
         private Transform target;
         private TotemController totem;
-        private float lastAttackTime;
-        private float lastDodgeTime;
+        private float lastAttackTime = -999f;
+        private float lastDodgeTime = -999f;
         private float stateChangeTime;
         private Vector3 lastKnownTotemPosition;
         private Vector3 dodgeDirection;
@@ -64,6 +60,8 @@ namespace TotemClash.Combat
         private Vector3 lastPosition;
         private float stuckTimer = 0f;
         private Vector3 wallAvoidanceDirection;
+        private float totemCheckTimer = 0f;
+        private float randomAttackTimer = 0f;
         
         private Transform playerTransform;
         private bool isInitialized = false;
@@ -84,12 +82,18 @@ namespace TotemClash.Combat
                 animator = GetComponentInChildren<Animator>();
             if (healthSystem == null)
                 healthSystem = GetComponent<HealthSystem>();
-            if (playerCombat == null)
-                playerCombat = GetComponent<PlayerCombat>();
+            if (combatSystem == null)
+                combatSystem = GetComponent<CombatSystem>();
             if (totemInteraction == null)
                 totemInteraction = GetComponent<PlayerTotemInteraction>();
+            if (aiming == null)
+                aiming = GetComponent<AimingSystem>();
             
-            // ИСПРАВЛЕНО: Настраиваем слои стен по умолчанию
+            if (combatSystem != null)
+            {
+                combatSystem.isPlayerControlled = false;
+            }
+            
             if (wallLayers == 0)
             {
                 wallLayers = LayerMask.GetMask("Default", "Wall", "Obstacle");
@@ -116,29 +120,111 @@ namespace TotemClash.Combat
             {
                 animator.SetFloat("Speed", 0f);
             }
-            
-            Debug.Log($"[AIBotController] {gameObject.name} {(freeze ? "frozen" : "unfrozen")}");
         }
         
         private void Update()
         {
+            if (CountdownDisplay.IsCountdownActive || isFrozen)
+            {
+                if (animator != null)
+                {
+                    animator.SetFloat("Speed", 0f);
+                }
+                return;
+            }
+            
             if (!isInitialized || healthSystem == null || healthSystem.IsDead)
                 return;
             
-            if (isFrozen) return;
-            
-            // ИСПРАВЛЕНО: Проверка на застревание
             CheckIfStuck();
             
-            if (totem == null)
+            totemCheckTimer += Time.deltaTime;
+            if (totemCheckTimer > 0.5f)
+            {
                 FindTotem();
+                totemCheckTimer = 0f;
+            }
             
-            // ИСПРАВЛЕНО: Проверка стен перед обновлением состояния
             if (currentState != BotState.AvoidingWall && IsWallAhead())
             {
                 StartWallAvoidance();
             }
             
+            // === ЛОГИКА ПРИОРИТЕТОВ ===
+            
+            // 1. Если несу тотем - бежать И стрелять на ходу + уворачиваться
+            if (totemInteraction != null && totemInteraction.IsCarrying)
+            {
+                // УВОРАЧИВАЕМСЯ ВСЕГДА (с тотемом)
+                CheckAndDodge();
+                
+                // Стреляем на ходу, не останавливаясь
+                ShootWhileMoving();
+                
+                if (currentState != BotState.FleeingWithTotem)
+                {
+                    ChangeState(BotState.FleeingWithTotem);
+                }
+                UpdateFleeingWithTotem();
+                UpdateAnimations();
+                return;
+            }
+            
+            // 2. Если враг несет тотем - преследовать
+            GameObject carrier = GetTotemCarrier();
+            if (carrier != null && carrier != gameObject)
+            {
+                // УВОРАЧИВАЕМСЯ ВСЕГДА (без тотема)
+                CheckAndDodge();
+                
+                if (target != carrier.transform || currentState != BotState.ChasingTotemCarrier)
+                {
+                    target = carrier.transform;
+                    ChangeState(BotState.ChasingTotemCarrier);
+                }
+                UpdateChasingTotemCarrier();
+                UpdateAnimations();
+                return;
+            }
+            
+            // 3. Если тотем свободен - идти к нему
+            if (totem != null && !totem.IsBeingCarried())
+            {
+                CheckAndDodge(); // Уворот даже при беге к тотему
+                
+                if (currentState != BotState.SeekingTotem)
+                {
+                    ChangeState(BotState.SeekingTotem);
+                }
+                UpdateSeekingTotem();
+                UpdateAnimations();
+                return;
+            }
+            
+            // 4. Случайные атаки (реже)
+            randomAttackTimer += Time.deltaTime;
+            if (randomAttackTimer > 2f)
+            {
+                Transform nearestEnemy = GetNearestThreat();
+                if (nearestEnemy != null)
+                {
+                    float dist = Vector3.Distance(transform.position, nearestEnemy.position);
+                    if (dist <= detectionRange && dist > minAttackDistance)
+                    {
+                        if (Random.value < 0.2f)
+                        {
+                            target = nearestEnemy;
+                            ChangeState(BotState.AttackingEnemy);
+                        }
+                    }
+                }
+                randomAttackTimer = 0f;
+            }
+            
+            // УВОРАЧИВАЕМСЯ ВСЕГДА (в любом состоянии)
+            CheckAndDodge();
+            
+            // Выполняем текущее состояние
             switch (currentState)
             {
                 case BotState.Idle:
@@ -147,14 +233,14 @@ namespace TotemClash.Combat
                 case BotState.SeekingTotem:
                     UpdateSeekingTotem();
                     break;
-                case BotState.FleeingWithTotem:
-                    UpdateFleeingWithTotem();
-                    break;
                 case BotState.ChasingTotemCarrier:
                     UpdateChasingTotemCarrier();
                     break;
                 case BotState.AttackingEnemy:
                     UpdateAttackingEnemy();
+                    break;
+                case BotState.Retreating:
+                    UpdateRetreating();
                     break;
                 case BotState.Dodging:
                     UpdateDodging();
@@ -165,12 +251,57 @@ namespace TotemClash.Combat
                 case BotState.AvoidingWall:
                     UpdateAvoidingWall();
                     break;
+                case BotState.FleeingWithTotem:
+                    UpdateFleeingWithTotem();
+                    break;
             }
             
             UpdateAnimations();
         }
         
-        // ИСПРАВЛЕНО: Проверка на застревание
+        // НОВЫЙ МЕТОД: Стрельба на ходу (без остановки)
+        private void ShootWhileMoving()
+        {
+            Transform nearestThreat = GetNearestThreat();
+            if (nearestThreat == null) return;
+            
+            float dist = Vector3.Distance(transform.position, nearestThreat.position);
+            
+            // Стреляем если враг в зоне досягаемости и не слишком близко
+            if (dist <= attackRange && dist > minAttackDistance && CanAttack())
+            {
+                if (Random.value < attackProbability)
+                {
+                    // Плавный поворот на врага БЕЗ остановки движения
+                    Vector3 directionToTarget = (nearestThreat.position - transform.position).normalized;
+                    directionToTarget.y = 0;
+                    
+                    // Плавно поворачиваемся лицом к врагу, но продолжаем двигаться
+                    if (directionToTarget.magnitude > 0.1f)
+                    {
+                        Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
+                        transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+                    }
+                    
+                    // Стреляем без остановки
+                    TryAttack(nearestThreat.position);
+                }
+            }
+        }
+        
+        // НОВЫЙ МЕТОД: Проверка и выполнение уворота
+        private void CheckAndDodge()
+        {
+            if (Time.time - lastDodgeTime < dodgeCooldown) return;
+            
+            // Проверяем incoming projectiles (если есть система определения)
+            // Или уворачиваемся случайно при бое
+            if (target != null && Random.value < dodgeChance * 0.5f) // 50% от базового шанса
+            {
+                StartDodge();
+            }
+        }
+        
         private void CheckIfStuck()
         {
             float distanceMoved = Vector3.Distance(transform.position, lastPosition);
@@ -181,7 +312,6 @@ namespace TotemClash.Combat
                 
                 if (stuckTimer > stuckCheckTime)
                 {
-                    Debug.Log($"[AIBotController] {gameObject.name} is stuck! Finding new path...");
                     roamTarget = GetRandomRoamPoint();
                     ChangeState(BotState.Roaming);
                     stuckTimer = 0f;
@@ -195,37 +325,30 @@ namespace TotemClash.Combat
             lastPosition = transform.position;
         }
         
-        // ИСПРАВЛЕНО: Проверка стены впереди
         private bool IsWallAhead()
         {
             Vector3 forward = transform.forward;
             Vector3 origin = transform.position + Vector3.up * 0.5f;
             
-            // Проверяем несколько лучей веером
             for (int i = -1; i <= 1; i++)
             {
                 Vector3 direction = Quaternion.Euler(0, i * 20f, 0) * forward;
                 if (Physics.Raycast(origin, direction, wallDetectionDistance, wallLayers))
                 {
-                    Debug.DrawRay(origin, direction * wallDetectionDistance, Color.red, 0.5f);
                     return true;
                 }
-                Debug.DrawRay(origin, direction * wallDetectionDistance, Color.green, 0.1f);
             }
             
             return false;
         }
         
-        // ИСПРАВЛЕНО: Начало обхода стены
         private void StartWallAvoidance()
         {
             Vector3 forward = transform.forward;
             Vector3 origin = transform.position + Vector3.up * 0.5f;
             
-            // Ищем направление без стены
             for (int i = 1; i <= 4; i++)
             {
-                // Пробуем вправо
                 Vector3 rightDir = Quaternion.Euler(0, i * wallAvoidanceAngle, 0) * forward;
                 if (!Physics.Raycast(origin, rightDir, wallDetectionDistance, wallLayers))
                 {
@@ -234,7 +357,6 @@ namespace TotemClash.Combat
                     return;
                 }
                 
-                // Пробуем влево
                 Vector3 leftDir = Quaternion.Euler(0, -i * wallAvoidanceAngle, 0) * forward;
                 if (!Physics.Raycast(origin, leftDir, wallDetectionDistance, wallLayers))
                 {
@@ -244,24 +366,20 @@ namespace TotemClash.Combat
                 }
             }
             
-            // Если не нашли - разворачиваемся назад
             wallAvoidanceDirection = -forward;
             ChangeState(BotState.AvoidingWall);
         }
         
-        // ИСПРАВЛЕНО: Обновление состояния обхода стены
         private void UpdateAvoidingWall()
         {
             MoveInDirection(wallAvoidanceDirection);
             
-            // Если стены больше нет - возвращаемся к предыдущему состоянию
             if (!IsWallAhead())
             {
                 ChangeState(BotState.SeekingTotem);
             }
         }
         
-        // ИСПРАВЛЕНО: Движение в заданном направлении с проверкой стен
         private void MoveInDirection(Vector3 direction)
         {
             if (characterController == null) return;
@@ -282,7 +400,7 @@ namespace TotemClash.Combat
         
         private void UpdateIdle()
         {
-            if (Time.time - stateChangeTime > 1f)
+            if (Time.time - stateChangeTime > 0.5f)
             {
                 ChangeState(BotState.SeekingTotem);
             }
@@ -290,37 +408,26 @@ namespace TotemClash.Combat
         
         private void UpdateSeekingTotem()
         {
-            if (totemInteraction != null && totemInteraction.IsCarrying)
-            {
-                ChangeState(BotState.FleeingWithTotem);
-                return;
-            }
-            
-            GameObject carrier = GetTotemCarrier();
-            if (carrier != null && carrier != gameObject)
-            {
-                target = carrier.transform;
-                ChangeState(BotState.ChasingTotemCarrier);
-                return;
-            }
-            
-            if (totem != null && !totem.IsBeingCarried())
-            {
-                Vector3 directionToTotem = (totem.transform.position - transform.position).normalized;
-                MoveInDirection(directionToTotem);
-                
-                float distanceToTotem = Vector3.Distance(transform.position, totem.transform.position);
-                if (distanceToTotem <= totemPickupRange)
-                {
-                    if (totemInteraction != null)
-                    {
-                        totemInteraction.TryPickUp();
-                    }
-                }
-            }
-            else
+            if (totem == null || totem.IsBeingCarried())
             {
                 ChangeState(BotState.Roaming);
+                return;
+            }
+            
+            Vector3 directionToTotem = (totem.transform.position - transform.position).normalized;
+            MoveInDirection(directionToTotem);
+            
+            float distanceToTotem = Vector3.Distance(transform.position, totem.transform.position);
+            if (distanceToTotem <= totemPickupRange)
+            {
+                if (totemInteraction != null)
+                {
+                    totemInteraction.TryPickUp();
+                    if (totemInteraction.IsCarrying)
+                    {
+                        ChangeState(BotState.FleeingWithTotem);
+                    }
+                }
             }
         }
         
@@ -340,32 +447,27 @@ namespace TotemClash.Combat
                 
                 if (distanceToThreat < fleeDistance)
                 {
+                    // Бежим от угрозы
                     Vector3 fleeDirection = (transform.position - nearestThreat.position).normalized;
                     
-                    // ИСПРАВЛЕНО: Проверяем, не ведет ли убегание в стену
                     Vector3 origin = transform.position + Vector3.up * 0.5f;
                     if (Physics.Raycast(origin, fleeDirection, wallDetectionDistance, wallLayers))
                     {
-                        // Если в стену - ищем другое направление
                         StartWallAvoidance();
                         return;
                     }
                     
+                    // ДВИЖЕНИЕ без остановки - никаких FaceTarget здесь!
                     MoveInDirection(fleeDirection);
-                    
-                    if (distanceToThreat < attackRange && Time.time - lastAttackTime > attackCooldown)
-                    {
-                        TryAttack(nearestThreat.position);
-                    }
                 }
                 else
                 {
-                    RoamAround();
+                    RoamAroundSafe();
                 }
             }
             else
             {
-                RoamAround();
+                RoamAroundSafe();
             }
         }
         
@@ -394,7 +496,15 @@ namespace TotemClash.Combat
                 }
                 else
                 {
-                    ChangeState(BotState.AttackingEnemy);
+                    // Близко - атакуем на ходу, не останавливаясь
+                    if (CanAttack() && Random.value < attackProbability)
+                    {
+                        TryAttack(target.position);
+                    }
+                    // Продолжаем двигаться к цели даже вблизи
+                    FaceTarget(target.position);
+                    Vector3 moveDir = (target.position - transform.position).normalized;
+                    MoveInDirection(moveDir);
                 }
             }
             else
@@ -405,9 +515,16 @@ namespace TotemClash.Combat
         
         private void UpdateAttackingEnemy()
         {
-            if (totemInteraction != null && totemInteraction.IsCarrying)
+            if (totem != null && !totem.IsBeingCarried())
             {
-                ChangeState(BotState.FleeingWithTotem);
+                ChangeState(BotState.SeekingTotem);
+                return;
+            }
+            
+            GameObject carrier = GetTotemCarrier();
+            if (carrier != null && carrier == target?.gameObject)
+            {
+                ChangeState(BotState.ChasingTotemCarrier);
                 return;
             }
             
@@ -419,20 +536,68 @@ namespace TotemClash.Combat
             
             float distanceToTarget = Vector3.Distance(transform.position, target.position);
             
-            if (distanceToTarget > attackRange * 1.2f)
+            if (aiming != null)
             {
-                ChangeState(BotState.ChasingTotemCarrier);
+                aiming.SetLockedTarget(target);
+            }
+            
+            if (distanceToTarget > attackRange)
+            {
+                ChangeState(BotState.SeekingTotem);
                 return;
             }
             
-            FaceTarget(target.position);
+            if (distanceToTarget < minAttackDistance)
+            {
+                ChangeState(BotState.Retreating);
+                return;
+            }
             
-            if (Time.time - lastAttackTime > attackCooldown)
+            // СТРЕЛЬБА НА ХОДУ - не останавливаемся!
+            if (CanAttack() && Random.value < attackProbability)
             {
                 TryAttack(target.position);
             }
             
+            // Продолжаем двигаться (страфимся), не стоим на месте
             StrafeAround(target.position);
+            
+            if (Time.time - stateChangeTime > 5f)
+            {
+                ChangeState(BotState.SeekingTotem);
+            }
+        }
+        
+        private void UpdateRetreating()
+        {
+            if (target == null)
+            {
+                ChangeState(BotState.SeekingTotem);
+                return;
+            }
+            
+            float distanceToTarget = Vector3.Distance(transform.position, target.position);
+            
+            if (aiming != null)
+            {
+                aiming.SetLockedTarget(target);
+            }
+            
+            if (distanceToTarget < preferredAttackDistance)
+            {
+                Vector3 retreatDir = (transform.position - target.position).normalized;
+                MoveInDirection(retreatDir);
+                
+                // Стреляем на ходу при отступлении
+                if (CanAttack() && Random.value < 0.5f)
+                {
+                    TryAttack(target.position);
+                }
+            }
+            else
+            {
+                ChangeState(BotState.AttackingEnemy);
+            }
         }
         
         private void UpdateDodging()
@@ -445,7 +610,7 @@ namespace TotemClash.Combat
             
             if (characterController != null)
             {
-                Vector3 movement = dodgeDirection * moveSpeed * Time.deltaTime;
+                Vector3 movement = dodgeDirection * moveSpeed * 1.5f * Time.deltaTime; // Уворот быстрее обычного бега
                 movement.y = -9.81f * Time.deltaTime;
                 characterController.Move(movement);
             }
@@ -453,6 +618,12 @@ namespace TotemClash.Combat
         
         private void UpdateRoaming()
         {
+            if (totem != null && !totem.IsBeingCarried())
+            {
+                ChangeState(BotState.SeekingTotem);
+                return;
+            }
+            
             if (Time.time - stateChangeTime > 3f)
             {
                 ChangeState(BotState.SeekingTotem);
@@ -480,7 +651,6 @@ namespace TotemClash.Combat
                 float randomDistance = Random.Range(5f, 15f);
                 Vector3 potentialTarget = transform.position + randomDirection * randomDistance;
                 
-                // ИСПРАВЛЕНО: Проверяем, не в стене ли точка
                 if (!Physics.CheckSphere(potentialTarget, 1f, wallLayers))
                 {
                     if (Physics.Raycast(potentialTarget + Vector3.up * 10f, Vector3.down, out RaycastHit hit, 20f))
@@ -490,8 +660,19 @@ namespace TotemClash.Combat
                 }
             }
             
-            // Если не нашли - возвращаем текущую позицию с небольшим смещением
             return transform.position + Random.insideUnitSphere * 5f;
+        }
+        
+        private void RoamAroundSafe()
+        {
+            float distanceToRoam = Vector3.Distance(transform.position, roamTarget);
+            if (distanceToRoam < 1f || IsWallAhead())
+            {
+                roamTarget = GetRandomRoamPoint();
+            }
+            
+            Vector3 directionToRoam = (roamTarget - transform.position).normalized;
+            MoveInDirection(directionToRoam);
         }
         
         private void FaceTarget(Vector3 targetPosition)
@@ -513,37 +694,34 @@ namespace TotemClash.Combat
             Vector3 toTarget = (center - transform.position).normalized;
             Vector3 strafeDirection = Vector3.Cross(toTarget, Vector3.up);
             
-            // ИСПРАВЛЕНО: Проверяем стену при стрейфе
+            if (Mathf.Sin(Time.time * 2f) > 0)
+                strafeDirection = -strafeDirection;
+            
             Vector3 origin = transform.position + Vector3.up * 0.5f;
             if (Physics.Raycast(origin, strafeDirection, wallDetectionDistance * 0.5f, wallLayers))
             {
                 strafeDirection = -strafeDirection;
             }
             
-            Vector3 movement = strafeDirection * moveSpeed * 0.7f * Time.deltaTime;
+            Vector3 movement = strafeDirection * moveSpeed * 0.6f * Time.deltaTime;
             movement.y = -9.81f * Time.deltaTime;
             characterController.Move(movement);
         }
         
-        private void RoamAround()
+        private bool CanAttack()
         {
-            float distanceToRoam = Vector3.Distance(transform.position, roamTarget);
-            if (distanceToRoam < 1f || IsWallAhead())
-            {
-                roamTarget = GetRandomRoamPoint();
-            }
-            
-            Vector3 directionToRoam = (roamTarget - transform.position).normalized;
-            MoveInDirection(directionToRoam);
+            return Time.time - lastAttackTime >= attackCooldown;
         }
         
         private void TryAttack(Vector3 targetPosition)
         {
-            if (playerCombat == null) return;
+            if (combatSystem == null) return;
+            if (!CanAttack()) return;
             
             lastAttackTime = Time.time;
-            playerCombat.PrimaryAttack(targetPosition);
+            combatSystem.AttackAt(targetPosition);
             
+            // Уворот сразу после атаки (как в старых играх: shoot & dodge)
             if (Random.value < dodgeChance && Time.time - lastDodgeTime > dodgeCooldown)
             {
                 StartDodge();

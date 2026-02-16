@@ -12,12 +12,17 @@ namespace TotemClash.Network
         [SerializeField] private float playerSpeed = 8f;
         [SerializeField] private float projectileSpeed = 15f;
         [SerializeField] private int damagePerHit = 20;
+        
+        [Header("Win Condition")]
+        [SerializeField] private int scoreToWin = 1000; // ОЧКИ ДЛЯ ПОБЕДЫ
+        [SerializeField] private bool useScoreLimit = true; // Использовать ли ограничение
 
         [Header("Events")]
         public UnityEvent<float> OnGameTimeChanged = new UnityEvent<float>();
         public UnityEvent<float> OnPlayerSpeedChanged = new UnityEvent<float>();
         public UnityEvent<float> OnProjectileSpeedChanged = new UnityEvent<float>();
         public UnityEvent<int> OnDamageChanged = new UnityEvent<int>();
+        public UnityEvent<int> OnScoreToWinChanged = new UnityEvent<int>(); // НОВОЕ
         public UnityEvent<string> OnErrorMessage = new UnityEvent<string>();
 
         private void Awake()
@@ -85,6 +90,22 @@ namespace TotemClash.Network
 
         public int GetDamage() => GetDamagePerHit();
         public void SetDamage(int value) => SetDamagePerHit(value);
+        
+        // НОВЫЕ МЕТОДЫ ДЛЯ ОЧКОВ ПОБЕДЫ
+        public int GetScoreToWin() => scoreToWin;
+        public bool UseScoreLimit() => useScoreLimit;
+        
+        public void SetScoreToWin(int value)
+        {
+            if (scoreToWin == value) return;
+            scoreToWin = Mathf.Max(100, value); // Минимум 100 очков
+            OnScoreToWinChanged?.Invoke(scoreToWin);
+        }
+        
+        public void SetUseScoreLimit(bool value)
+        {
+            useScoreLimit = value;
+        }
 
         private void ApplyPlayerSpeedToAll()
         {
@@ -109,24 +130,24 @@ namespace TotemClash.Network
 
         private void ApplyProjectileSpeedToAll()
         {
-            var allMagicians = FindObjectsByType<TotemClash.Classes.MagicianClass>(FindObjectsSortMode.None);
-            foreach (var magician in allMagicians)
+            var allCombatSystems = FindObjectsByType<CombatSystem>(FindObjectsSortMode.None);
+            foreach (var combat in allCombatSystems)
             {
-                if (magician != null)
+                if (combat != null && combat.primaryAttack != null)
                 {
-                    magician.fireballSpeed = projectileSpeed;
+                    combat.primaryAttack.projectileSpeed = projectileSpeed;
                 }
             }
         }
 
         private void ApplyDamageToAll()
         {
-            var allMagicians = FindObjectsByType<TotemClash.Classes.MagicianClass>(FindObjectsSortMode.None);
-            foreach (var magician in allMagicians)
+            var allCombatSystems = FindObjectsByType<CombatSystem>(FindObjectsSortMode.None);
+            foreach (var combat in allCombatSystems)
             {
-                if (magician != null)
+                if (combat != null && combat.primaryAttack != null)
                 {
-                    magician.fireballDamage = damagePerHit;
+                    combat.primaryAttack.damage = damagePerHit;
                 }
             }
         }
@@ -137,6 +158,7 @@ namespace TotemClash.Network
             SetPlayerSpeed(8f);
             SetProjectileSpeed(15f);
             SetDamagePerHit(20);
+            SetScoreToWin(1000);
         }
     }
 }

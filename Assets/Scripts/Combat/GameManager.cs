@@ -3,6 +3,7 @@ using TMPro;
 using UnityEngine.Events;
 using TotemClash.UI;
 using TotemClash.Network;
+using System.Linq;
 
 namespace TotemClash.Combat
 {
@@ -16,7 +17,8 @@ namespace TotemClash.Combat
         [Header("UI")]
         public TMP_Text timerText;
         public TMP_Text globalScoreText;
-        public TMP_Text warningText; // ИСПРАВЛЕНО: Текст для предупреждений
+        public TMP_Text warningText;
+        public TMP_Text scoreLimitText; // Текст лимита очков (опционально)
         
         [Header("References")]
         public TotemController totem;
@@ -28,7 +30,7 @@ namespace TotemClash.Combat
         private bool isGameActive = false;
         private bool gameEnded = false;
         private float carrierScoreAccumulator = 0f;
-        private float originalGameTime = 300f; // ИСПРАВЛЕНО: Храним изначальное время
+        private float originalGameTime = 300f;
         
         [Header("Events")]
         public UnityEvent<float> OnTimeChanged;
@@ -64,10 +66,12 @@ namespace TotemClash.Combat
             ApplyGameTimeSettings();
             
             currentTime = gameTime;
-            originalGameTime = gameTime; // ИСПРАВЛЕНО: Сохраняем оригинальное время
+            originalGameTime = gameTime;
             totalScore = 0;
             isGameActive = false;
             gameEnded = false;
+            
+            UpdateScoreLimitUI();
             
             if (countdownDisplay != null)
             {
@@ -85,6 +89,7 @@ namespace TotemClash.Combat
             if (GameSettings.Instance != null)
             {
                 GameSettings.Instance.OnGameTimeChanged.AddListener(OnGameTimeSettingChanged);
+                GameSettings.Instance.OnScoreToWinChanged.AddListener(OnScoreLimitChanged);
             }
         }
         
@@ -93,6 +98,7 @@ namespace TotemClash.Combat
             if (GameSettings.Instance != null)
             {
                 GameSettings.Instance.OnGameTimeChanged.RemoveListener(OnGameTimeSettingChanged);
+                GameSettings.Instance.OnScoreToWinChanged.RemoveListener(OnScoreLimitChanged);
             }
         }
         
@@ -106,32 +112,27 @@ namespace TotemClash.Combat
             }
         }
         
-        // ИСПРАВЛЕНО: Обработка изменения времени с проверкой
         private void OnGameTimeSettingChanged(float newTime)
         {
-            // Если игра активна - проверяем, не меньше ли новое время текущего
             if (isGameActive && !gameEnded)
             {
-                float elapsedTime = originalGameTime - currentTime; // Сколько времени прошло
+                float elapsedTime = originalGameTime - currentTime;
                 
                 if (newTime < elapsedTime)
                 {
-                    // Новое время меньше, чем уже прошло - показываем предупреждение
                     ShowWarning($"Введенное время ({FormatTime(newTime)}) меньше прошедшего ({FormatTime(elapsedTime)})!");
                     Debug.LogWarning($"[GameManager] Cannot set time to {newTime}, already elapsed {elapsedTime}");
-                    return; // Не применяем изменение
+                    return;
                 }
                 
-                // Применяем новое время: прошедшее время остается, меняется общее
                 gameTime = newTime;
                 currentTime = newTime - elapsedTime;
-                originalGameTime = newTime; // Обновляем оригинальное время
+                originalGameTime = newTime;
                 
                 Debug.Log($"[GameManager] Game time updated to: {newTime}, elapsed: {elapsedTime}, current: {currentTime}");
             }
             else if (!isGameActive && !gameEnded)
             {
-                // Игра не началась - просто меняем время
                 gameTime = newTime;
                 currentTime = newTime;
                 originalGameTime = newTime;
@@ -141,7 +142,27 @@ namespace TotemClash.Combat
             UpdateTimerUI();
         }
         
-        // ИСПРАВЛЕНО: Показать предупреждение
+        private void OnScoreLimitChanged(int newLimit)
+        {
+            UpdateScoreLimitUI();
+        }
+        
+        private void UpdateScoreLimitUI()
+        {
+            if (scoreLimitText != null && GameSettings.Instance != null)
+            {
+                if (GameSettings.Instance.UseScoreLimit())
+                {
+                    scoreLimitText.text = $"Цель: {GameSettings.Instance.GetScoreToWin()} очков";
+                    scoreLimitText.gameObject.SetActive(true);
+                }
+                else
+                {
+                    scoreLimitText.gameObject.SetActive(false);
+                }
+            }
+        }
+        
         private void ShowWarning(string message)
         {
             if (warningText != null)
@@ -149,7 +170,6 @@ namespace TotemClash.Combat
                 warningText.text = message;
                 warningText.gameObject.SetActive(true);
                 
-                // Автоматически скрываем через 3 секунды
                 CancelInvoke(nameof(HideWarning));
                 Invoke(nameof(HideWarning), 3f);
             }
@@ -167,7 +187,6 @@ namespace TotemClash.Combat
             }
         }
         
-        // ИСПРАВЛЕНО: Форматирование времени
         private string FormatTime(float timeInSeconds)
         {
             int minutes = Mathf.FloorToInt(timeInSeconds / 60);
@@ -188,6 +207,28 @@ namespace TotemClash.Combat
             {
                 UpdateGameTime();
                 UpdateScoreFromTotem();
+                CheckWinCondition(); // НОВАЯ ПРОВЕРКА
+            }
+        }
+        
+        // НОВЫЙ МЕТОД: Проверка условия победы
+        private void CheckWinCondition()
+        {
+            if (GameSettings.Instance == null || !GameSettings.Instance.UseScoreLimit())
+                return;
+                
+            int scoreLimit = GameSettings.Instance.GetScoreToWin();
+            
+            // Проверяем всех игроков
+            PlayerScore[] allPlayers = FindObjectsByType<PlayerScore>(FindObjectsSortMode.None);
+            foreach (var player in allPlayers)
+            {
+                if (player.GetScore() >= scoreLimit)
+                {
+                    Debug.Log($"[GameManager] {player.GetPlayerName()} reached score limit ({player.GetScore()}/{scoreLimit})!");
+                    EndGame(player); // Заканчиваем игру с победителем
+                    return;
+                }
             }
         }
         
@@ -232,18 +273,20 @@ namespace TotemClash.Combat
             isGameActive = true;
             gameEnded = false;
             currentTime = gameTime;
-            originalGameTime = gameTime; // ИСПРАВЛЕНО: Сохраняем оригинальное время
+            originalGameTime = gameTime;
             totalScore = 0;
             carrierScoreAccumulator = 0f;
             
             OnGameStarted?.Invoke();
             UpdateTimerUI();
             UpdateScoreUI();
+            UpdateScoreLimitUI();
             
             Debug.Log("[GameManager] Game started!");
         }
         
-        public void EndGame()
+        // ПЕРЕГРУЗКА: Закончить игру с конкретным победителем
+        public void EndGame(PlayerScore winner = null)
         {
             if (gameEnded) return;
             
@@ -259,7 +302,14 @@ namespace TotemClash.Combat
                 gameOverMenu.ShowGameOver();
             }
             
-            Debug.Log("[GameManager] Game Ended!");
+            if (winner != null)
+            {
+                Debug.Log($"[GameManager] Game Ended! Winner: {winner.GetPlayerName()} with {winner.GetScore()} points!");
+            }
+            else
+            {
+                Debug.Log("[GameManager] Game Ended! Time limit reached.");
+            }
         }
         
         private void FreezeAllPlayers(bool freeze)
@@ -277,7 +327,10 @@ namespace TotemClash.Combat
             AIBotController[] bots = FindObjectsByType<AIBotController>(FindObjectsSortMode.None);
             foreach (var bot in bots)
             {
-                bot.Freeze(freeze);
+                if (bot != null)
+                {
+                    bot.Freeze(freeze);
+                }
             }
         }
         

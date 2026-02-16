@@ -19,6 +19,14 @@ namespace TotemClash.Combat
         [Tooltip("If true, will automatically respawn after death delay. If false, destroys the object.")]
         public bool autoRespawn = true;
 
+        [Header("Spawn Protection (Roblox Style)")]
+        [Tooltip("If true, grants temporary invincibility after respawn")]
+        [SerializeField] private bool useSpawnProtection = true;
+        [Tooltip("Duration of spawn protection in seconds")]
+        [SerializeField] private float spawnProtectionDuration = 2f;
+        [Tooltip("Visual effect for spawn protection (optional)")]
+        [SerializeField] private GameObject spawnProtectionEffect;
+        
         [Header("References")]
         [SerializeField] private Rigidbody rb;
         [SerializeField] private Animator animator;
@@ -32,20 +40,23 @@ namespace TotemClash.Combat
         public UnityEvent OnRespawn;
 
         private bool isDead = false;
+        private bool isSpawnProtected = false;
         private Vector3 spawnPosition;
         private Quaternion spawnRotation;
-        private Vector3 originalScale; // ИСПРАВЛЕНО: сохраняем оригинальный масштаб
+        private Vector3 originalScale;
+        private Coroutine spawnProtectionCoroutine;
 
         public float CurrentHealth => currentHealth;
         public float MaxHealth => maxHealth;
         public bool IsDead => isDead;
+        public bool IsSpawnProtected => isSpawnProtected;
 
         private void Awake()
         {
             currentHealth = maxHealth;
             spawnPosition = transform.position;
             spawnRotation = transform.rotation;
-            originalScale = transform.localScale; // ИСПРАВЛЕНО: сохраняем масштаб при старте
+            originalScale = transform.localScale;
 
             if (rb == null)
                 rb = GetComponent<Rigidbody>();
@@ -56,12 +67,25 @@ namespace TotemClash.Combat
         private void Start()
         {
             OnHealthChanged?.Invoke(GetHealthPercent());
+            
+            // Применяем защиту при старте (начальный спавн)
+            if (useSpawnProtection)
+            {
+                StartSpawnProtection();
+            }
         }
 
         public void TakeDamage(float damage, GameObject source)
         {
             if (isDead || damage <= 0)
                 return;
+
+            // ПРОВЕРКА НА SPAWN PROTECTION
+            if (isSpawnProtected)
+            {
+                Debug.Log($"[HealthSystem] {gameObject.name} ignored {damage} damage due to spawn protection!");
+                return;
+            }
 
             currentHealth -= damage;
             currentHealth = Mathf.Clamp(currentHealth, 0, maxHealth);
@@ -146,7 +170,6 @@ namespace TotemClash.Combat
                 float t = elapsed / deathAnimationDuration;
                 transform.position = Vector3.Lerp(startPosition, endPosition, t);
                 transform.rotation = Quaternion.Lerp(startRotation, endRotation, t);
-                // Не меняем масштаб здесь, или меняем временно
                 elapsed += Time.deltaTime;
                 yield return null;
             }
@@ -158,7 +181,7 @@ namespace TotemClash.Combat
 
             transform.position = spawnPosition;
             transform.rotation = spawnRotation;
-            transform.localScale = originalScale; // ИСПРАВЛЕНО: восстанавливаем сохраненный масштаб
+            transform.localScale = originalScale;
 
             if (rb != null)
             {
@@ -177,7 +200,65 @@ namespace TotemClash.Combat
             }
 
             isDead = false;
+            
+            // ЗАПУСКАЕМ SPAWN PROTECTION ПОСЛЕ РЕСПАВНА
+            if (useSpawnProtection)
+            {
+                StartSpawnProtection();
+            }
+            
             OnRespawn?.Invoke();
+        }
+        
+        private void StartSpawnProtection()
+        {
+            // Останавливаем предыдущую корутину если есть
+            if (spawnProtectionCoroutine != null)
+            {
+                StopCoroutine(spawnProtectionCoroutine);
+            }
+            
+            spawnProtectionCoroutine = StartCoroutine(SpawnProtectionCoroutine());
+        }
+
+        private IEnumerator SpawnProtectionCoroutine()
+        {
+            isSpawnProtected = true;
+            
+            // Включаем визуальный эффект если есть
+            if (spawnProtectionEffect != null)
+            {
+                spawnProtectionEffect.SetActive(true);
+            }
+            
+            Debug.Log($"[HealthSystem] {gameObject.name} has spawn protection for {spawnProtectionDuration} seconds");
+            
+            // Можно добавить мигание или другой визуальный эффект здесь
+            float timer = 0f;
+            while (timer < spawnProtectionDuration)
+            {
+                timer += Time.deltaTime;
+                
+                // Пример мигания (опционально)
+                /*
+                if (animator != null)
+                {
+                    float blink = Mathf.PingPong(timer * 10f, 1f);
+                    // Применить прозрачность или эмиссию
+                }
+                */
+                
+                yield return null;
+            }
+            
+            isSpawnProtected = false;
+            
+            if (spawnProtectionEffect != null)
+            {
+                spawnProtectionEffect.SetActive(false);
+            }
+            
+            Debug.Log($"[HealthSystem] {gameObject.name} spawn protection ended");
         }
 
         public void ResetHealth()

@@ -5,26 +5,40 @@ namespace TotemClash.Combat
 {
     public class AimingSystem : MonoBehaviour
     {
-        [Header("References")]
+        [Header("Control")]
+        public bool isPlayerControlled = true; // TRUE для игрока, FALSE для ботов
+        
+        [Header("Camera")]
         public Camera playerCamera;
-        public GameObject crosshairPrefab;
         
-        [Header("Settings")]
+        [Header("Aim Settings")]
         public LayerMask aimLayers;
+        public LayerMask groundLayers;
         public float maxAimDistance = 100f;
-        public float aimHeightOffset = 1.2f;
+        public bool showDebugRays = true;
         
-        [Header("Crosshair Colors")]
+        [Header("Prediction")]
+        public bool enablePrediction = true;
+        public float predictionTime = 2f;
+        
+        [Header("Crosshair")]
+        public GameObject crosshairPrefab;
         public Color normalColor = Color.white;
         public Color enemyColor = Color.red;
         
-        private Vector3 currentAimPosition;
-        private GameObject aimedPlayer = null;
-        private Transform aimedTransform = null;
-        private GameObject crosshairObject;
-        private Image crosshairImage;
+        private Vector3 currentAimPoint;
+        private Transform lockedTarget;
+        private Vector3 predictedPosition;
         private RectTransform crosshairRect;
-        private bool crosshairInitialized = false;
+        private Image crosshairImage;
+        private bool crosshairVisible = true;
+        
+        public Vector3 AimPoint => currentAimPoint;
+        public Transform LockedTarget => lockedTarget;
+        public Vector3 PredictedPosition => predictedPosition;
+        public Vector3 GetAimPosition() => currentAimPoint;
+        public bool IsAimingAtPlayer() => lockedTarget != null;
+        public Transform GetAimedTransform() => lockedTarget;
         
         void Start()
         {
@@ -32,36 +46,99 @@ namespace TotemClash.Combat
                 playerCamera = Camera.main;
                 
             if (aimLayers == 0)
-                aimLayers = ~LayerMask.GetMask("UI", "Ignore Raycast");
-                
-            InitializeCrosshair();
+                aimLayers = LayerMask.GetMask("Player", "Enemy", "Default");
+            if (groundLayers == 0)
+                groundLayers = LayerMask.GetMask("Ground", "Default");
+            
+            // Прицел создаем только для игрока
+            if (isPlayerControlled)
+            {
+                CreateCrosshair();
+            }
         }
         
-        void InitializeCrosshair()
+        void Update()
         {
-            if (crosshairInitialized) return;
-            
-            if (crosshairObject == null)
+            if (isPlayerControlled)
             {
-                crosshairObject = GameObject.Find("Crosshair");
-                if (crosshairObject == null)
+                UpdatePlayerAim();
+                UpdateCrosshair();
+            }
+            else
+            {
+                UpdateBotAim();
+            }
+        }
+        
+        // Логика для игрока (мышь)
+        void UpdatePlayerAim()
+        {
+            Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+            RaycastHit hit;
+            
+            lockedTarget = null;
+            predictedPosition = Vector3.zero;
+            
+            if (Physics.Raycast(ray, out hit, maxAimDistance, aimLayers))
+            {
+                if (hit.collider.CompareTag("Player") || hit.collider.CompareTag("Enemy"))
                 {
-                    CreateCrosshair();
+                    lockedTarget = hit.collider.transform;
+                    
+                    if (enablePrediction)
+                    {
+                        predictedPosition = CalculatePredictedPosition(lockedTarget);
+                        currentAimPoint = predictedPosition;
+                    }
+                    else
+                    {
+                        currentAimPoint = lockedTarget.position + Vector3.up * 1.2f;
+                    }
+                    
+                    if (showDebugRays)
+                        Debug.DrawLine(transform.position, currentAimPoint, Color.red, 0.1f);
+                    return;
                 }
             }
             
-            if (crosshairObject != null)
+            if (Physics.Raycast(ray, out hit, maxAimDistance, groundLayers))
             {
-                crosshairRect = crosshairObject.GetComponent<RectTransform>();
-                crosshairImage = crosshairObject.GetComponent<Image>();
-                
-                if (crosshairImage == null)
-                    crosshairImage = crosshairObject.AddComponent<Image>();
-                
-                crosshairImage.color = normalColor;
-                crosshairObject.SetActive(true);
-                crosshairInitialized = true;
+                currentAimPoint = hit.point;
             }
+            else
+            {
+                Plane groundPlane = new Plane(Vector3.up, transform.position);
+                float distance;
+                if (groundPlane.Raycast(ray, out distance))
+                    currentAimPoint = ray.GetPoint(distance);
+                else
+                    currentAimPoint = transform.position + transform.forward * 10f;
+            }
+            
+            if (showDebugRays)
+                Debug.DrawLine(transform.position, currentAimPoint, Color.green, 0.1f);
+        }
+        
+        // Логика для ботов (не использует мышь!)
+        void UpdateBotAim()
+        {
+            // Боты не используют мышь - они целятся в lockedTarget или в текущую цель
+            // Цель устанавливается через SetTarget() из AiBotController
+            // Или автоматически если lockedTarget есть
+            
+            if (lockedTarget != null)
+            {
+                if (enablePrediction)
+                {
+                    predictedPosition = CalculatePredictedPosition(lockedTarget);
+                    currentAimPoint = predictedPosition;
+                }
+                else
+                {
+                    currentAimPoint = lockedTarget.position + Vector3.up * 1.2f;
+                }
+            }
+            // Если lockedTarget нет, оставляем текущий currentAimPoint (установленный через SetTarget)
         }
         
         void CreateCrosshair()
@@ -81,123 +158,121 @@ namespace TotemClash.Combat
                 canvasObj.AddComponent<GraphicRaycaster>();
             }
             
-            crosshairObject = new GameObject("Crosshair");
-            crosshairObject.transform.SetParent(canvas.transform, false);
-            
-            crosshairRect = crosshairObject.AddComponent<RectTransform>();
-            crosshairRect.sizeDelta = new Vector2(32, 32);
-            
-            crosshairImage = crosshairObject.AddComponent<Image>();
-            crosshairImage.color = normalColor;
-            
-            CreateSimpleCrosshairSprite();
-        }
-        
-        void CreateSimpleCrosshairSprite()
-        {
-            Texture2D texture = new Texture2D(64, 64);
-            Color[] colors = new Color[64 * 64];
-            
-            for (int y = 0; y < 64; y++)
+            if (crosshairPrefab != null)
             {
-                for (int x = 0; x < 64; x++)
-                {
-                    bool isCross = (x >= 30 && x <= 34) || (y >= 30 && y <= 34);
-                    colors[y * 64 + x] = isCross ? Color.white : Color.clear;
-                }
-            }
-            
-            texture.SetPixels(colors);
-            texture.Apply();
-            
-            Sprite sprite = Sprite.Create(texture, new Rect(0, 0, 64, 64), new Vector2(0.5f, 0.5f));
-            crosshairImage.sprite = sprite;
-        }
-        
-        void Update()
-        {
-            if (!crosshairInitialized)
-                InitializeCrosshair();
-                
-            UpdateAim();
-            UpdateCrosshair();
-        }
-        
-        void UpdateAim()
-        {
-            if (playerCamera == null) return;
-            
-            aimedPlayer = null;
-            aimedTransform = null;
-            
-            Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-            RaycastHit hit;
-            
-            // Raycast на все слои
-            if (Physics.Raycast(ray, out hit, maxAimDistance, aimLayers))
-            {
-                // Проверяем теги Player или Enemy
-                if (hit.collider.CompareTag("Player") || hit.collider.CompareTag("Enemy"))
-                {
-                    aimedPlayer = hit.collider.gameObject;
-                    aimedTransform = hit.collider.transform; // Сохраняем Transform
-                    
-                    // Целимся в центр масс
-                    currentAimPosition = aimedTransform.position + Vector3.up * aimHeightOffset;
-                }
-                else
-                {
-                    // Попали в землю/стену
-                    currentAimPosition = hit.point;
-                }
+                GameObject ch = Instantiate(crosshairPrefab, canvas.transform);
+                crosshairRect = ch.GetComponent<RectTransform>();
+                crosshairImage = ch.GetComponent<Image>();
+                ch.name = "Crosshair_" + gameObject.name;
             }
             else
             {
-                // Ничего не попали
-                currentAimPosition = ray.GetPoint(maxAimDistance);
+                CreateDefaultCrosshair(canvas);
             }
+            
+            if (crosshairRect != null)
+            {
+                crosshairRect.anchorMin = new Vector2(0.5f, 0.5f);
+                crosshairRect.anchorMax = new Vector2(0.5f, 0.5f);
+                crosshairRect.anchoredPosition = Vector2.zero;
+            }
+        }
+        
+        void CreateDefaultCrosshair(Canvas canvas)
+        {
+            GameObject ch = new GameObject("Crosshair");
+            ch.transform.SetParent(canvas.transform, false);
+            
+            crosshairRect = ch.AddComponent<RectTransform>();
+            crosshairRect.sizeDelta = new Vector2(32, 32);
+            
+            crosshairImage = ch.AddComponent<Image>();
+            crosshairImage.color = normalColor;
+            
+            Texture2D tex = new Texture2D(32, 32);
+            Color[] pixels = new Color[32 * 32];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = Color.clear;
+            
+            for (int x = 14; x < 18; x++)
+                for (int y = 0; y < 32; y++)
+                    pixels[y * 32 + x] = Color.white;
+            
+            for (int y = 14; y < 18; y++)
+                for (int x = 0; x < 32; x++)
+                    pixels[y * 32 + x] = Color.white;
+            
+            tex.SetPixels(pixels);
+            tex.Apply();
+            
+            Sprite sprite = Sprite.Create(tex, new Rect(0, 0, 32, 32), new Vector2(0.5f, 0.5f));
+            crosshairImage.sprite = sprite;
         }
         
         void UpdateCrosshair()
         {
-            if (crosshairImage == null) return;
+            if (crosshairRect == null) return;
+            if (!crosshairVisible) return;
+            if (!isPlayerControlled) return; // Только для игрока!
             
-            // Красный если есть цель
-            crosshairImage.color = aimedPlayer != null ? enemyColor : normalColor;
+            crosshairRect.position = Input.mousePosition;
             
-            if (crosshairRect != null)
+            if (crosshairImage != null)
             {
-                crosshairRect.position = Input.mousePosition;
+                crosshairImage.color = lockedTarget != null ? enemyColor : normalColor;
             }
         }
         
-        public Vector3 GetAimPosition()
+        Vector3 CalculatePredictedPosition(Transform target)
         {
-            return currentAimPosition;
+            Rigidbody rb = target.GetComponent<Rigidbody>();
+            CharacterController cc = target.GetComponent<CharacterController>();
+            
+            Vector3 velocity = Vector3.zero;
+            if (rb != null) velocity = rb.linearVelocity;
+            else if (cc != null) velocity = cc.velocity;
+            
+            Vector3 futurePos = target.position + velocity * predictionTime;
+            futurePos.y = Mathf.Max(futurePos.y, target.position.y);
+            futurePos += Vector3.up * 1.2f;
+            
+            return futurePos;
         }
         
-        public GameObject GetAimedPlayer()
+        public bool HasTarget()
         {
-            return aimedPlayer;
+            return lockedTarget != null;
         }
         
-        // ИСПРАВЛЕНО: Добавлен метод для MagicianClass
-        public Transform GetAimedTransform()
+        public bool IsTargetInRange(float range)
         {
-            return aimedTransform;
+            if (lockedTarget == null) return false;
+            return Vector3.Distance(transform.position, lockedTarget.position) <= range;
         }
         
-        public bool IsAimingAtPlayer()
+        public void SetTarget(Vector3 position)
         {
-            return aimedPlayer != null;
+            currentAimPoint = position;
+        }
+        
+        // Для ботов - установка цели
+        public void SetLockedTarget(Transform target)
+        {
+            lockedTarget = target;
         }
         
         public void ShowCrosshair(bool show)
         {
-            if (crosshairObject != null)
-            {
-                crosshairObject.SetActive(show);
-            }
+            if (!isPlayerControlled) return; // Ботам нельзя показывать прицел
+            
+            crosshairVisible = show;
+            if (crosshairRect != null)
+                crosshairRect.gameObject.SetActive(show);
+        }
+        
+        void OnDestroy()
+        {
+            if (crosshairRect != null && isPlayerControlled)
+                Destroy(crosshairRect.gameObject);
         }
     }
 }

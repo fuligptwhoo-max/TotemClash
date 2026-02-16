@@ -254,7 +254,7 @@ GameObject:
   - component: {fileID: 6500141258383441148}
   - component: {fileID: 7024916904189473229}
   - component: {fileID: 8795104534836616130}
-  - component: {fileID: 6880164821498650013}
+  - component: {fileID: 693817753122126082}
   m_Layer: 8
   m_Name: 'Fireball '
   m_TagString: Projectile
@@ -320,13 +320,13 @@ SphereCollider:
     serializedVersion: 2
     m_Bits: 0
   m_LayerOverridePriority: 0
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Radius: 1.35
+  m_Radius: 1.25
   m_Center: {x: 0.1, y: 0, z: 0}
---- !u!114 &6880164821498650013
+--- !u!114 &693817753122126082
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -335,21 +335,17 @@ MonoBehaviour:
   m_GameObject: {fileID: 5872399956286793286}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c871898bb97a10c4b9c0b5b2b9ed9874, type: 3}
+  m_Script: {fileID: 11500000, guid: 55c0df266a2f89d4da804675830be38d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FireballProjectile
-  speed: 40
-  damage: 50
-  lifeTime: 3
-  useHoming: 0
-  rotationSpeed: 2000
-  usePrediction: 0
-  usePerfectIntercept: 0
-  aggressiveChase: 1.5
-  minAimHeight: 0.5
-  minDirectionY: -0.3
-  ignoreOwnerTime: 0.3
-  impactEffect: {fileID: 0}
+  m_EditorClassIdentifier: Assembly-CSharp::TotemClash.Combat.Projectile
+  trail: {fileID: 0}
+  glowLight: {fileID: 0}
+  minHeightAboveGround: 0.8
+  groundCheckDistance: 2
+  terrainLiftStrength: 0.15
+  groundLayers:
+    serializedVersion: 2
+    m_Bits: 8
 --- !u!1 &6978609153826886453
 GameObject:
   m_ObjectHideFlags: 0

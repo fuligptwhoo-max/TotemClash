@@ -7,15 +7,8 @@ using TotemClash.UI;
 
 namespace TotemClash.Combat
 {
-    /// <summary>
-    /// Локальный спавнер для одиночной игры.
-    /// Управляет спавном игрока, ботов и запуском игровой сессии.
-    /// Заменяет сетевую логику спавна для single-player режима.
-    /// </summary>
     public class LocalGameSpawner : MonoBehaviour
     {
-        #region Singleton
-
         private static LocalGameSpawner _instance;
         public static LocalGameSpawner Instance
         {
@@ -29,53 +22,29 @@ namespace TotemClash.Combat
             }
         }
 
-        #endregion
-
-        #region Settings
-
         [Header("Prefabs")]
-        [Tooltip("Префаб игрока (с PlayerController)")]
         public GameObject playerPrefab;
+        public GameObject crosshairPrefab;
 
         [Header("References")]
-        [Tooltip("Спавнер ботов")]
         public BotSpawner botSpawner;
-
-        [Tooltip("Точки спавна игрока и ботов")]
         public List<Transform> spawnPoints = new List<Transform>();
-
-        [Tooltip("UI отображения обратного отсчета")]
         public CountdownDisplay countdownDisplay;
 
         [Header("Game Settings")]
-        [Tooltip("Запускать игру автоматически при старте сцены")]
         [SerializeField] private bool autoStartOnAwake = true;
-
-        [Tooltip("Задержка перед спавном ботов после игрока (в секундах)")]
         [SerializeField] private float botsSpawnDelay = 0.5f;
 
         [Header("Events")]
-        [Tooltip("Вызывается когда игрок заспавнен")]
         public UnityEvent<GameObject> OnPlayerSpawned = new UnityEvent<GameObject>();
-
-        [Tooltip("Вызывается когда игра полностью запущена")]
         public UnityEvent OnGameStarted = new UnityEvent();
-
-        #endregion
-
-        #region Private Fields
 
         private GameObject spawnedPlayer;
         private bool isGameStarted = false;
         private bool isSpawning = false;
 
-        #endregion
-
-        #region Unity Lifecycle
-
         private void Awake()
         {
-            // Singleton setup
             if (_instance != null && _instance != this)
             {
                 Debug.LogWarning("[LocalGameSpawner] Multiple instances found. Destroying duplicate.");
@@ -84,7 +53,6 @@ namespace TotemClash.Combat
             }
             _instance = this;
 
-            // Auto-find references if not set
             FindReferences();
         }
 
@@ -104,13 +72,6 @@ namespace TotemClash.Combat
             }
         }
 
-        #endregion
-
-        #region Public Methods
-
-        /// <summary>
-        /// Запускает игру: спавнит игрока, ботов и запускает обратный отсчет.
-        /// </summary>
         public void StartGame()
         {
             if (isSpawning || isGameStarted)
@@ -125,10 +86,6 @@ namespace TotemClash.Combat
             StartCoroutine(StartGameSequence());
         }
 
-        /// <summary>
-        /// Спавнит игрока в случайной точке спавна.
-        /// </summary>
-        /// <returns>Заспавненный игрок или null если ошибка</returns>
         public GameObject SpawnPlayer()
         {
             if (playerPrefab == null)
@@ -143,7 +100,6 @@ namespace TotemClash.Combat
                 return null;
             }
 
-            // Выбираем случайную точку спавна
             Transform spawnPoint = GetRandomSpawnPoint();
             if (spawnPoint == null)
             {
@@ -151,100 +107,69 @@ namespace TotemClash.Combat
                 return null;
             }
 
-            // Спавним игрока
             spawnedPlayer = Instantiate(playerPrefab, spawnPoint.position, spawnPoint.rotation);
             spawnedPlayer.name = "LocalPlayer";
 
-            // Настраиваем игрока
             SetupPlayer(spawnedPlayer);
 
             Debug.Log($"[LocalGameSpawner] Player spawned at {spawnPoint.position}");
 
-            // Вызываем событие
             OnPlayerSpawned?.Invoke(spawnedPlayer);
 
             return spawnedPlayer;
         }
 
-        /// <summary>
-        /// Перезапускает текущую игру.
-        /// </summary>
         public void RestartGame()
         {
             Debug.Log("[LocalGameSpawner] Restarting game...");
 
-            // Сбрасываем состояние
             isGameStarted = false;
             isSpawning = false;
 
-            // Уничтожаем текущего игрока
             if (spawnedPlayer != null)
             {
                 Destroy(spawnedPlayer);
                 spawnedPlayer = null;
             }
 
-            // Очищаем ботов
             if (botSpawner != null)
             {
                 botSpawner.ClearBots();
             }
 
-            // Сбрасываем GameManager
             if (GameManager.Instance != null)
             {
                 GameManager.Instance.RestartGame();
             }
             else
             {
-                // Если нет GameManager - просто запускаем заново
                 StartGame();
             }
         }
 
-        /// <summary>
-        /// Возвращает заспавненного игрока.
-        /// </summary>
-        /// <returns>GameObject игрока или null</returns>
         public GameObject GetPlayer()
         {
             return spawnedPlayer;
         }
 
-        /// <summary>
-        /// Проверяет, запущена ли игра.
-        /// </summary>
-        /// <returns>true если игра запущена</returns>
         public bool IsGameStarted()
         {
             return isGameStarted;
         }
 
-        /// <summary>
-        /// Проверяет, идет ли процесс спавна.
-        /// </summary>
-        /// <returns>true если идет спавн</returns>
         public bool IsSpawning()
         {
             return isSpawning;
         }
 
-        #endregion
-
-        #region Private Methods
-
         private IEnumerator StartGameSequence()
         {
-            // 1. Спавним игрока
             SpawnPlayer();
 
-            // Небольшая задержка перед спавном ботов
             yield return new WaitForSeconds(botsSpawnDelay);
 
-            // 2. Спавним ботов
             if (botSpawner != null)
             {
-                // Если у бот-спавнера нет точек спавна - передаем наши
                 var botSpawnerType = botSpawner.GetType();
                 var spawnPointsField = botSpawnerType.GetField("spawnPoints", 
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -265,15 +190,11 @@ namespace TotemClash.Combat
                 Debug.LogWarning("[LocalGameSpawner] BotSpawner not assigned. Playing without bots.");
             }
 
-            // 3. Показываем обратный отсчет
             if (countdownDisplay != null)
             {
-                // Для локальной версии используем StartCountdown если он доступен
-                // или просто ждем если countdown управляется GameManager
                 Debug.Log("[LocalGameSpawner] Starting countdown...");
             }
 
-            // 4. Ждем окончания спавна ботов
             if (botSpawner != null)
             {
                 while (botSpawner.IsSpawning())
@@ -282,8 +203,6 @@ namespace TotemClash.Combat
                 }
             }
 
-            // 5. Запускаем GameManager (игра начнется после отсчета)
-            // GameManager сам управляет отсчетом и стартом игры
             isSpawning = false;
             isGameStarted = true;
 
@@ -294,11 +213,9 @@ namespace TotemClash.Combat
 
         private void SetupPlayer(GameObject player)
         {
-            // Настраиваем слой и тег
             player.layer = LayerMask.NameToLayer("Player");
             player.tag = "Player";
 
-            // Убеждаемся что есть PlayerController
             PlayerController controller = player.GetComponent<PlayerController>();
             if (controller == null)
             {
@@ -306,23 +223,26 @@ namespace TotemClash.Combat
             }
             else
             {
-                // Принудительно включаем компонент
                 controller.enabled = true;
             }
 
-            // Убеждаемся что есть необходимые компоненты
-            EnsureComponent<PlayerCombat>(player);
+            EnsureComponent<CombatSystem>(player);
             EnsureComponent<HealthSystem>(player);
             EnsureComponent<PlayerScore>(player);
+            EnsureComponent<AimingSystem>(player);
 
-            // Настраиваем HealthSystem
+            AimingSystem aiming = player.GetComponent<AimingSystem>();
+            if (aiming != null && crosshairPrefab != null)
+            {
+                aiming.crosshairPrefab = crosshairPrefab;
+            }
+
             HealthSystem healthSystem = player.GetComponent<HealthSystem>();
             if (healthSystem != null)
             {
                 healthSystem.SetSpawnPosition(player.transform.position, player.transform.rotation);
             }
 
-            // Настраиваем PlayerScore
             PlayerScore playerScore = player.GetComponent<PlayerScore>();
             if (playerScore != null)
             {
@@ -348,10 +268,7 @@ namespace TotemClash.Combat
                 return transform;
             }
 
-            // Выбираем случайную точку, но не ту, где уже есть игрок
             List<Transform> availablePoints = new List<Transform>(spawnPoints);
-            
-            // Удаляем null точки
             availablePoints.RemoveAll(t => t == null);
             
             if (availablePoints.Count == 0)
@@ -364,7 +281,6 @@ namespace TotemClash.Combat
 
         private void FindReferences()
         {
-            // Ищем BotSpawner
             if (botSpawner == null)
             {
                 botSpawner = FindFirstObjectByType<BotSpawner>();
@@ -374,7 +290,6 @@ namespace TotemClash.Combat
                 }
             }
 
-            // Ищем CountdownDisplay
             if (countdownDisplay == null)
             {
                 countdownDisplay = FindFirstObjectByType<CountdownDisplay>();
@@ -384,7 +299,6 @@ namespace TotemClash.Combat
                 }
             }
 
-            // Ищем точки спавна
             if (spawnPoints.Count == 0)
             {
                 GameObject[] spawnPointObjects = GameObject.FindGameObjectsWithTag("SpawnPoint");
@@ -399,7 +313,6 @@ namespace TotemClash.Combat
                 }
             }
 
-            // Проверяем SpawnPointManager
             if (SpawnPointManager.Instance != null && spawnPoints.Count == 0)
             {
                 if (SpawnPointManager.Instance.spawnPoints != null)
@@ -409,10 +322,6 @@ namespace TotemClash.Combat
                 }
             }
         }
-
-        #endregion
-
-        #region Editor Validation
 
 #if UNITY_EDITOR
         private void OnValidate()
@@ -425,11 +334,8 @@ namespace TotemClash.Combat
 
         private void Reset()
         {
-            // Автоматически ищем референсы при добавлении компонента
             FindReferences();
         }
 #endif
-
-        #endregion
     }
 }

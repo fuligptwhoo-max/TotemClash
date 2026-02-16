@@ -257,12 +257,12 @@ MeshRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 30503376}
   m_Enabled: 1
-  m_CastShadows: 1
+  m_CastShadows: 0
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
   m_StaticShadowCaster: 0
   m_MotionVectors: 1
-  m_LightProbeUsage: 1
+  m_LightProbeUsage: 0
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
@@ -1285,12 +1285,12 @@ MeshRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 261841327}
   m_Enabled: 1
-  m_CastShadows: 1
+  m_CastShadows: 0
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
   m_StaticShadowCaster: 0
   m_MotionVectors: 1
-  m_LightProbeUsage: 1
+  m_LightProbeUsage: 0
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
@@ -1783,7 +1783,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TotemClash.AI.BotSpawner
   botPrefab: {fileID: 4293088731174751543, guid: 456b962c0e5495440ba451b7c86e7dbd, type: 3}
   botCount: 3
-  spawnDelay: 0.5
+  spawnDelay: 0
   spawnPoints:
   - {fileID: 447608875}
   - {fileID: 1965697673}
@@ -2486,6 +2486,7 @@ MonoBehaviour:
   timerText: {fileID: 423699210}
   globalScoreText: {fileID: 0}
   warningText: {fileID: 0}
+  scoreLimitText: {fileID: 0}
   totem: {fileID: 148884843}
   countdownDisplay: {fileID: 775003680}
   gameOverMenu: {fileID: 245758143}
@@ -4994,12 +4995,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TotemClash.Combat.LocalGameSpawner
   playerPrefab: {fileID: 4293088731174751543, guid: 1fbf10e7fb6cbad47b0290ef22527d7b, type: 3}
+  crosshairPrefab: {fileID: 6568024347610113337, guid: 70a4b9709d8d3df40ac468625afaf993, type: 3}
   botSpawner: {fileID: 353167886}
   spawnPoints:
   - {fileID: 1950129971}
   countdownDisplay: {fileID: 775003680}
   autoStartOnAwake: 1
-  botsSpawnDelay: 0.5
+  botsSpawnDelay: 0
   OnPlayerSpawned:
     m_PersistentCalls:
       m_Calls: []
@@ -5706,6 +5708,8 @@ MonoBehaviour:
   playerSpeed: 8
   projectileSpeed: 15
   damagePerHit: 20
+  scoreToWin: 1000
+  useScoreLimit: 1
   OnGameTimeChanged:
     m_PersistentCalls:
       m_Calls: []
@@ -5716,6 +5720,9 @@ MonoBehaviour:
     m_PersistentCalls:
       m_Calls: []
   OnDamageChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  OnScoreToWinChanged:
     m_PersistentCalls:
       m_Calls: []
   OnErrorMessage:
@@ -6800,12 +6807,12 @@ MeshRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1567392425}
   m_Enabled: 1
-  m_CastShadows: 1
+  m_CastShadows: 0
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
   m_StaticShadowCaster: 0
   m_MotionVectors: 1
-  m_LightProbeUsage: 1
+  m_LightProbeUsage: 0
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0
@@ -7747,12 +7754,12 @@ MeshRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1907518972}
   m_Enabled: 1
-  m_CastShadows: 1
+  m_CastShadows: 0
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
   m_StaticShadowCaster: 0
   m_MotionVectors: 1
-  m_LightProbeUsage: 1
+  m_LightProbeUsage: 0
   m_ReflectionProbeUsage: 1
   m_RayTracingMode: 2
   m_RayTraceProcedural: 0

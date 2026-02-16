@@ -17,6 +17,9 @@ namespace TotemClash.UI
         public string finalText = "GO!";
         public Color[] countdownColors = new Color[] { Color.red, Color.yellow, Color.green, Color.white };
         
+        // СТАТИЧЕСКИЙ ФЛАГ ДЛЯ ПРОВЕРКИ В ДРУГИХ СКРИПТАХ
+        public static bool IsCountdownActive { get; private set; } = false;
+        
         private float countdownTimer = -1f;
         private bool countdownActive = false;
         private bool countdownFinished = false;
@@ -72,6 +75,7 @@ namespace TotemClash.UI
             countdownTimer = countdownDuration;
             countdownActive = true;
             countdownFinished = false;
+            IsCountdownActive = true; // УСТАНАВЛИВАЕМ ФЛАГ
             
             if (countdownPanel != null)
                 countdownPanel.SetActive(true);
@@ -86,6 +90,7 @@ namespace TotemClash.UI
         {
             countdownActive = false;
             countdownFinished = true;
+            IsCountdownActive = false; // СБРАСЫВАЕМ ФЛАГ
             
             FreezeAllPlayers(false);
             
@@ -100,7 +105,6 @@ namespace TotemClash.UI
                 countdownPanel.SetActive(false);
         }
         
-        // ИСПРАВЛЕНО: Правильный фриз ботов
         private void FreezeAllPlayers(bool freeze)
         {
             // Фризим игрока
@@ -114,7 +118,7 @@ namespace TotemClash.UI
                 }
             }
             
-            // ИСПРАВЛЕНО: Фризим ботов через их метод Freeze
+            // Фризим ботов
             AIBotController[] bots = FindObjectsByType<AIBotController>(FindObjectsSortMode.None);
             foreach (var bot in bots)
             {

@@ -11,8 +11,8 @@ namespace TotemClash.UI
         public static LobbyManager Instance { get; private set; }
         
         [Header("Panels")]
-        public GameObject lobbyPanel; // Главная панель лобби (если есть)
-        public GameObject settingsPanel; // ServerSettingsPanel
+        public GameObject lobbyPanel;
+        public GameObject settingsPanel;
         
         [Header("Settings UI")]
         public Slider gameTimeSlider;
@@ -23,11 +23,14 @@ namespace TotemClash.UI
         public TMP_Text projectileSpeedValue;
         public Slider damageSlider;
         public TMP_Text damageValue;
+        public Slider scoreLimitSlider; // НОВОЕ
+        public TMP_Text scoreLimitValue; // НОВОЕ
+        public Toggle useScoreLimitToggle; // НОВОЕ
         
         [Header("Buttons")]
         public Button startGameButton;
-        public Button backButton; // Кнопка Назад
-        public Button settingsBackButton; // Кнопка Назад внутри SettingsPanel (если отличается)
+        public Button backButton;
+        public Button settingsBackButton;
         public Button resetDefaultsButton;
         
         [Header("Scene")]
@@ -54,14 +57,13 @@ namespace TotemClash.UI
                 backButton.onClick.AddListener(OnBackClicked);
             
             if (settingsBackButton != null)
-                settingsBackButton.onClick.AddListener(OnBackClicked); // Тот же метод
+                settingsBackButton.onClick.AddListener(OnBackClicked);
             
             if (resetDefaultsButton != null)
                 resetDefaultsButton.onClick.AddListener(ResetSettings);
             
             SetupSliders();
             
-            // Скрываем всё при старте
             if (lobbyPanel != null) lobbyPanel.SetActive(false);
             if (settingsPanel != null) settingsPanel.SetActive(false);
         }
@@ -76,22 +78,19 @@ namespace TotemClash.UI
                 settingsBackButton.onClick.RemoveListener(OnBackClicked);
         }
         
-        // Показывает панель настроек (вызывается из MainMenu)
         public void ShowLobby()
         {
             if (lobbyPanel != null) lobbyPanel.SetActive(true);
-            if (settingsPanel != null) settingsPanel.SetActive(true); // Показываем сразу настройки
+            if (settingsPanel != null) settingsPanel.SetActive(true);
             
             UpdateSettingsUI();
         }
         
-        // ИСПРАВЛЕНО: Back возвращает в MainMenu
         private void OnBackClicked()
         {
             if (settingsPanel != null) settingsPanel.SetActive(false);
             if (lobbyPanel != null) lobbyPanel.SetActive(false);
             
-            // Находим MainMenu и показываем его
             MainMenu mainMenu = FindFirstObjectByType<MainMenu>();
             if (mainMenu != null)
             {
@@ -142,6 +141,27 @@ namespace TotemClash.UI
                     UpdateSettingsText();
                 });
             }
+            
+            // НОВОЕ: Слайдер лимита очков
+            if (scoreLimitSlider != null)
+            {
+                scoreLimitSlider.minValue = 100f;
+                scoreLimitSlider.maxValue = 5000f;
+                scoreLimitSlider.wholeNumbers = true;
+                scoreLimitSlider.onValueChanged.AddListener(v => { 
+                    if (GameSettings.Instance != null) GameSettings.Instance.SetScoreToWin((int)v);
+                    UpdateSettingsText();
+                });
+            }
+            
+            // НОВОЕ: Тоггл использования лимита
+            if (useScoreLimitToggle != null)
+            {
+                useScoreLimitToggle.onValueChanged.AddListener(v => {
+                    if (GameSettings.Instance != null) GameSettings.Instance.SetUseScoreLimit(v);
+                    if (scoreLimitSlider != null) scoreLimitSlider.interactable = v;
+                });
+            }
         }
         
         private void UpdateSettingsUI()
@@ -159,6 +179,16 @@ namespace TotemClash.UI
             
             if (damageSlider != null)
                 damageSlider.value = GameSettings.Instance.GetDamage();
+                
+            if (scoreLimitSlider != null)
+                scoreLimitSlider.value = GameSettings.Instance.GetScoreToWin();
+                
+            if (useScoreLimitToggle != null)
+            {
+                useScoreLimitToggle.isOn = GameSettings.Instance.UseScoreLimit();
+                if (scoreLimitSlider != null) 
+                    scoreLimitSlider.interactable = useScoreLimitToggle.isOn;
+            }
             
             UpdateSettingsText();
         }
@@ -175,6 +205,8 @@ namespace TotemClash.UI
                 projectileSpeedValue.text = $"{GameSettings.Instance.GetProjectileSpeed():F1}";
             if (damageValue != null) 
                 damageValue.text = $"{GameSettings.Instance.GetDamage():F0}";
+            if (scoreLimitValue != null)
+                scoreLimitValue.text = $"{GameSettings.Instance.GetScoreToWin():F0}";
         }
         
         private void ResetSettings()

@@ -492,9 +492,6 @@ PrefabInstance:
       addedObject: {fileID: 3847618795883353816}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 5e524d8b16523f847baa9b30f0f4d1d7, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 6436426812288481058}
-    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 5e524d8b16523f847baa9b30f0f4d1d7, type: 3}
-      insertIndex: -1
       addedObject: {fileID: 2356467979291238015}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 5e524d8b16523f847baa9b30f0f4d1d7, type: 3}
       insertIndex: -1
@@ -504,7 +501,7 @@ PrefabInstance:
       addedObject: {fileID: 3444612805250520568}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 5e524d8b16523f847baa9b30f0f4d1d7, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 862816520520012300}
+      addedObject: {fileID: 4246904104549592938}
   m_SourcePrefab: {fileID: 100100000, guid: 5e524d8b16523f847baa9b30f0f4d1d7, type: 3}
 --- !u!4 &3521759761497790349 stripped
 Transform:
@@ -650,37 +647,15 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TotemClash.Combat.PlayerController
   moveSpeed: 8
   rotationSpeed: 10
-  attackCooldown: 0.5
   totemPickupTime: 1.5
   totemPickupUIPrefab: {fileID: 6728695699017084466, guid: 4e9702b939526b545a0a5e0b7b57bc2f, type: 3}
   animator: {fileID: 5015604724536654041}
   characterController: {fileID: 7565798942999086076}
   aimingSystem: {fileID: 2356467979291238015}
-  playerCombat: {fileID: 6436426812288481058}
   healthSystem: {fileID: 3444612805250520568}
-  attackKey: 323
-  ability1Key: 113
-  ability2Key: 114
-  ultimateKey: 102
+  combatSystem: {fileID: 4246904104549592938}
   pickupKey: 101
   dropKey: 103
---- !u!114 &6436426812288481058
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4293088731174751543}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0e82fea23eccef0478b3f2cdda46fc3f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::PlayerCombat
-  animator: {fileID: 5015604724536654041}
-  playerController: {fileID: 3847618795883353816}
-  magicianClass: {fileID: 862816520520012300}
-  aimingSystem: {fileID: 2356467979291238015}
-  attackInputBuffer: 0.1
 --- !u!114 &2356467979291238015
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -693,13 +668,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 87a637a447201a5458a86b56c2756c86, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AimingSystem
+  isPlayerControlled: 1
   playerCamera: {fileID: 0}
-  crosshairPrefab: {fileID: 0}
   aimLayers:
     serializedVersion: 2
-    m_Bits: 128
+    m_Bits: 129
+  groundLayers:
+    serializedVersion: 2
+    m_Bits: 9
   maxAimDistance: 1000
-  aimHeightOffset: 1
+  showDebugRays: 1
+  enablePrediction: 1
+  predictionTime: 2
+  crosshairPrefab: {fileID: 6568024347610113337, guid: 70a4b9709d8d3df40ac468625afaf993, type: 3}
   normalColor: {r: 1, g: 1, b: 1, a: 1}
   enemyColor: {r: 1, g: 0, b: 0, a: 1}
 --- !u!114 &1288565836354235124
@@ -735,6 +716,9 @@ MonoBehaviour:
   deathAnimationDuration: 1
   respawnDelay: 3
   autoRespawn: 1
+  useSpawnProtection: 1
+  spawnProtectionDuration: 2
+  spawnProtectionEffect: {fileID: 0}
   rb: {fileID: -5325415861013941098}
   animator: {fileID: 5015604724536654041}
   hitCollider: {fileID: 7565798942999086076}
@@ -751,7 +735,7 @@ MonoBehaviour:
   OnRespawn:
     m_PersistentCalls:
       m_Calls: []
---- !u!114 &862816520520012300
+--- !u!114 &4246904104549592938
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -760,21 +744,86 @@ MonoBehaviour:
   m_GameObject: {fileID: 4293088731174751543}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7358fc3e94cd1ae488af6c36a5196552, type: 3}
+  m_Script: {fileID: 11500000, guid: c05326668e74ecd4ea12c7905379ac1f, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::MagicianClass
-  fireballPrefab: {fileID: 5872399956286793286, guid: 12bc12696cf9e8c41a165ebb88df7cd1, type: 3}
+  m_EditorClassIdentifier: Assembly-CSharp::TotemClash.Combat.CombatSystem
   castPoint: {fileID: 5232664059511263279}
-  fireballCooldown: 1
-  fireballSpeed: 40
-  fireballDamage: 50
-  attackAnimationDelay: 0.3
-  autoAimRange: 1000
-  enableAutoAim: 0
-  autoAimAngle: 360
-  obstacleLayers:
-    serializedVersion: 2
-    m_Bits: 192
-  heightTolerance: 100
-  minFlightHeight: -0.5
-  minAimDistance: 2
+  animator: {fileID: 5015604724536654041}
+  aiming: {fileID: 2356467979291238015}
+  isPlayerControlled: 1
+  aiAttackRange: 25
+  aiAttackCooldown: 1
+  primaryAttack:
+    weaponName: Fireball
+    attackType: 0
+    projectilePrefab: {fileID: 5872399956286793286, guid: 12bc12696cf9e8c41a165ebb88df7cd1, type: 3}
+    damage: 50
+    range: 100
+    cooldown: 1
+    projectileSpeed: 40
+    useHoming: 1
+    spawnOffset: 0.3
+    castDelay: 0.3
+    isMelee: 0
+    meleeArc: 120
+    usePrediction: 1
+    aimAssist: 4
+    muzzleEffect: {fileID: 0}
+    hitEffect: {fileID: 0}
+  abilityQ:
+    weaponName: Fireball
+    attackType: 0
+    projectilePrefab: {fileID: 0}
+    damage: 50
+    range: 100
+    cooldown: 1
+    projectileSpeed: 40
+    useHoming: 1
+    spawnOffset: 0.3
+    castDelay: 0.3
+    isMelee: 0
+    meleeArc: 120
+    usePrediction: 1
+    aimAssist: 2
+    muzzleEffect: {fileID: 0}
+    hitEffect: {fileID: 0}
+  abilityR:
+    weaponName: Fireball
+    attackType: 0
+    projectilePrefab: {fileID: 0}
+    damage: 50
+    range: 100
+    cooldown: 1
+    projectileSpeed: 40
+    useHoming: 1
+    spawnOffset: 0.3
+    castDelay: 0.3
+    isMelee: 0
+    meleeArc: 120
+    usePrediction: 1
+    aimAssist: 2
+    muzzleEffect: {fileID: 0}
+    hitEffect: {fileID: 0}
+  ultimate:
+    weaponName: Fireball
+    attackType: 0
+    projectilePrefab: {fileID: 0}
+    damage: 50
+    range: 100
+    cooldown: 1
+    projectileSpeed: 40
+    useHoming: 1
+    spawnOffset: 0.3
+    castDelay: 0.3
+    isMelee: 0
+    meleeArc: 120
+    usePrediction: 1
+    aimAssist: 2
+    muzzleEffect: {fileID: 0}
+    hitEffect: {fileID: 0}
+  OnHitTarget:
+    m_PersistentCalls:
+      m_Calls: []
+  OnAttack:
+    m_PersistentCalls:
+      m_Calls: []
