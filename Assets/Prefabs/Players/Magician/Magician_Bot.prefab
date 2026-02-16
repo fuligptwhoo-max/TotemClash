@@ -649,21 +649,24 @@ MonoBehaviour:
   rotationSpeed: 5
   attackRange: 10000
   detectionRange: 40
-  totemPriorityRange: 100
+  strafeSpeed: 6
+  strafeChangeInterval: 0.8
+  lowHealthThreshold: 0.3
+  maxEnemiesNearby: 2
+  dangerRadius: 15
   attackCooldown: 1.5
   minAttackDistance: 0
-  preferredAttackDistance: 12
+  preferredAttackDistance: 30
   dodgeChance: 0.4
   dodgeCooldown: 2
   attackProbability: 0.7
   totemPickupRange: 2.5
-  fleeDistance: 35
+  fleeDistance: 25
   minFleeDistance: 8
-  aggressionRange: 25
+  wallDetectionDistance: 10
   wallLayers:
     serializedVersion: 2
     m_Bits: 1024
-  wallDetectionDistance: 10
   wallAvoidanceAngle: 45
   stuckCheckTime: 2
   minMoveDistance: 0.5
